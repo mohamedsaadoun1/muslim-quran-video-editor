@@ -1,90 +1,96 @@
 // js/services/local-storage.adapter.js
 
-import errorLogger from '../core/error-logger.js'; // لتسجيل أي أخطاء عند التعامل مع localStorage
+// errorLogger يمكن تمريره إذا احتاجت هذه الوحدة إلى تسجيل متقدم،
+// ولكن بشكل عام، دوالها تُرجع قيمة أو لا تفعل شيئًا بهدوء إذا فشلت،
+// والكود المستدعي هو الذي يتعامل مع النتيجة.
+// لتسجيل أخطاء داخلية حرجة (مثل localStorage غير متاح)، يمكنها استخدام console.warn أو console.error مباشرة.
+// let localErrorLoggerRef = console;
+// if (typeof window !== 'undefined' && window.errorLogger) {
+//     localErrorLoggerRef = window.errorLogger;
+// }
 
 const localStorageAdapter = {
   /**
-   * Retrieves an item from localStorage.
-   * Parses it as JSON if possible.
-   * @param {string} key - The key of the item to retrieve.
-   * @returns {any | null} The retrieved item, or null if not found or an error occurs.
+   * Checks if localStorage is available and usable.
+   * @returns {boolean} True if localStorage is available, false otherwise.
    */
-  getItem(key) {
-    if (typeof localStorage === 'undefined') {
-      errorLogger.logWarning({
-        message: 'localStorage is not available in this environment.',
-        origin: 'localStorageAdapter.getItem',
-        context: { key },
-      });
-      return null;
+  isAvailable() {
+    try {
+      const testKey = '__localStorageTest__';
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(testKey, testKey);
+        localStorage.removeItem(testKey);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false; // localStorage is disabled or quota exceeded even for test.
+    }
+  },
+
+  /**
+   * Retrieves an item from localStorage.
+   * Automatically parses JSON strings.
+   * @param {string} key - The key of the item to retrieve.
+   * @param {any} [defaultValue=null] - The value to return if the key is not found or an error occurs.
+   * @returns {any | null} The retrieved and parsed item, or the defaultValue.
+   */
+  getItem(key, defaultValue = null) {
+    if (!this.isAvailable()) {
+      console.warn(`[LocalStorageAdapter] localStorage is not available. Cannot get item: "${key}".`);
+      return defaultValue;
     }
     try {
-      const item = localStorage.getItem(key);
-      if (item === null) {
-        return null;
+      const itemString = localStorage.getItem(key);
+      if (itemString === null) {
+        return defaultValue;
       }
-      // Attempt to parse as JSON, but return raw string if it fails
-      // (in case something non-JSON was stored by mistake or by other code)
+      // Attempt to parse as JSON. If it fails, it might be a raw string.
       try {
-        return JSON.parse(item);
+        return JSON.parse(itemString);
       } catch (e) {
-        // errorLogger.logWarning({ // This might be too noisy if you intentionally store non-JSON strings
-        //   message: `Value for key "${key}" in localStorage is not valid JSON. Returning raw string.`,
-        //   origin: 'localStorageAdapter.getItem',
-        //   context: { rawValue: item }
-        // });
-        return item; // Return as string if not JSON
+        // console.warn(`[LocalStorageAdapter] Value for key "${key}" is not valid JSON. Returning as raw string.`, itemString);
+        return itemString; // Return as raw string if parsing failed
       }
     } catch (error) {
-      errorLogger.handleError({
-        error,
-        message: `Error retrieving item "${key}" from localStorage.`,
-        origin: 'localStorageAdapter.getItem',
-        context: { key },
-      });
-      return null;
+      console.error(`[LocalStorageAdapter] Error retrieving item "${key}" from localStorage:`, error);
+      // If a global errorLogger is available and configured, use it:
+      // (localErrorLoggerRef.handleError || console.error).call(localErrorLoggerRef, {
+      //   error, message: `Error retrieving item "${key}" from localStorage.`,
+      //   origin: 'localStorageAdapter.getItem', context: { key }
+      // });
+      return defaultValue;
     }
   },
 
   /**
    * Stores an item in localStorage.
-   * Converts the item to a JSON string before storing.
+   * Automatically stringifies the value to JSON.
    * @param {string} key - The key to store the item under.
-   * @param {any} value - The value to store.
+   * @param {any} value - The value to store. Must be JSON-serializable.
    * @returns {boolean} True if successful, false otherwise.
    */
   setItem(key, value) {
-    if (typeof localStorage === 'undefined') {
-      errorLogger.logWarning({
-        message: 'localStorage is not available. Cannot set item.',
-        origin: 'localStorageAdapter.setItem',
-        context: { key },
-      });
+    if (!this.isAvailable()) {
+      console.warn(`[LocalStorageAdapter] localStorage is not available. Cannot set item: "${key}".`);
       return false;
     }
     try {
       if (value === undefined) {
-        // Storing undefined as JSON results in it being removed if it's a property of an object.
-        // To be consistent with localStorage behavior (which stringifies undefined to "undefined"),
-        // we might choose to remove the item or log a warning.
-        // For simplicity, let's remove it if the intent was to "clear" it.
-        errorLogger.logWarning({
-            message: `Attempted to store 'undefined' for key "${key}". Removing item instead.`,
-            origin: 'localStorageAdapter.setItem',
-        });
-        this.removeItem(key);
-        return true;
+        // console.warn(`[LocalStorageAdapter] Attempted to store 'undefined' for key "${key}". Removing item instead.`);
+        this.removeItem(key); // Or just return false / do nothing
+        return true; // Technically, the "undefined" state is achieved
       }
       const stringifiedValue = JSON.stringify(value);
       localStorage.setItem(key, stringifiedValue);
       return true;
-    } catch (error) {
-      errorLogger.handleError({
-        error, // This could be a QuotaExceededError
-        message: `Error setting item "${key}" in localStorage. Value might be too large or localStorage is full.`,
-        origin: 'localStorageAdapter.setItem',
-        context: { key /*, value: (value might be very large, be careful logging it) */ },
-      });
+    } catch (error) { // This could be a QuotaExceededError or other serialization error
+      console.error(`[LocalStorageAdapter] Error setting item "${key}" in localStorage:`, error);
+      // (localErrorLoggerRef.handleError || console.error).call(localErrorLoggerRef, {
+      //   error, message: `Error setting item "${key}" in localStorage. Value might be too large or localStorage is full.`,
+      //   origin: 'localStorageAdapter.setItem',
+      //   context: { key /* value might be too large to log directly */ }
+      // });
       return false;
     }
   },
@@ -92,53 +98,67 @@ const localStorageAdapter = {
   /**
    * Removes an item from localStorage.
    * @param {string} key - The key of the item to remove.
+   * @returns {boolean} True if removal was attempted (doesn't mean item existed), false if localStorage not available.
    */
   removeItem(key) {
-    if (typeof localStorage === 'undefined') {
-      errorLogger.logWarning({
-        message: 'localStorage is not available. Cannot remove item.',
-        origin: 'localStorageAdapter.removeItem',
-        context: { key },
-      });
-      return;
+    if (!this.isAvailable()) {
+      console.warn(`[LocalStorageAdapter] localStorage is not available. Cannot remove item: "${key}".`);
+      return false;
     }
     try {
       localStorage.removeItem(key);
+      return true;
     } catch (error) {
-      errorLogger.handleError({
-        error,
-        message: `Error removing item "${key}" from localStorage.`,
-        origin: 'localStorageAdapter.removeItem',
-        context: { key },
-      });
+      console.error(`[LocalStorageAdapter] Error removing item "${key}" from localStorage:`, error);
+      // (localErrorLoggerRef.handleError || console.error).call(localErrorLoggerRef, {
+      //   error, message: `Error removing item "${key}" from localStorage.`,
+      //   origin: 'localStorageAdapter.removeItem', context: { key }
+      // });
+      return false; // Indicate an issue during removal attempt
     }
   },
 
   /**
-   * Clears all items from localStorage managed by this application (if using a prefix).
-   * For now, this is a generic clear all.
-   * CAUTION: This will clear EVERYTHING in localStorage for the current origin.
-   * A more sophisticated approach would be to iterate and remove only prefixed keys.
+   * Clears all items from localStorage for the current origin.
+   * Use with caution.
+   * @returns {boolean} True if clear was attempted, false if localStorage not available.
    */
   clearAll() {
-    if (typeof localStorage === 'undefined') {
-      errorLogger.logWarning({
-        message: 'localStorage is not available. Cannot clear items.',
-        origin: 'localStorageAdapter.clearAll',
-      });
-      return;
+    if (!this.isAvailable()) {
+      console.warn('[LocalStorageAdapter] localStorage is not available. Cannot clear items.');
+      return false;
     }
     try {
       localStorage.clear();
-      // console.info('[LocalStorageAdapter] All items cleared from localStorage.');
+      // console.info('[LocalStorageAdapter] All items cleared from localStorage for this origin.');
+      return true;
     } catch (error) {
-      errorLogger.handleError({
-        error,
-        message: 'Error clearing localStorage.',
-        origin: 'localStorageAdapter.clearAll',
-      });
+      console.error('[LocalStorageAdapter] Error clearing localStorage:', error);
+      // (localErrorLoggerRef.handleError || console.error).call(localErrorLoggerRef, {
+      //   error, message: 'Error clearing localStorage.', origin: 'localStorageAdapter.clearAll'
+      // });
+      return false;
     }
   }
+  // Note: A more sophisticated version for `clearAll` might iterate through keys
+  // and only remove those matching a specific application prefix (e.g., from app.constants.js).
+  // For example:
+  // clearAppSpecificItems(appPrefix) {
+  //   if (!this.isAvailable() || !appPrefix) return false;
+  //   try {
+  //     Object.keys(localStorage).forEach(key => {
+  //       if (key.startsWith(appPrefix)) {
+  //         localStorage.removeItem(key);
+  //       }
+  //     });
+  //     return true;
+  //   } catch (error) { ... }
+  // }
 };
+
+// This service typically doesn't need an `initialize...` function called by moduleBootstrap.
+// Its methods are utilities. Other modules import it directly when needed.
+// If it needed to take `errorLogger` as a dependency for more advanced logging,
+// then `moduleBootstrap` would need to initialize it and pass the logger.
 
 export default localStorageAdapter;
