@@ -1,0 +1,117 @@
+name: Super AI Project & Android Bot
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  ai-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python & Tools
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          python -m pip install --upgrade pip openai
+
+      - name: Super AI Bot - Natural Language, Project, Android, Everything
+        env:
+          OPENAI_API_KEY: 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
+          GH_USER: ${{ github.event.issue.user.login }}
+          GH_OWNER: ${{ github.repository_owner }}
+        run: |
+          import os, openai, re, shutil, json
+          from datetime import datetime
+
+          openai.api_key = os.environ["OPENAI_API_KEY"]
+          issue_title = """${{ github.event.issue.title }}"""
+          issue_body = """${{ github.event.issue.body }}"""
+          user_input = issue_title + "\n" + issue_body
+          GH_USER = os.environ["GH_USER"]
+          GH_OWNER = os.environ["GH_OWNER"]
+
+          SYSTEM_PROMPT = '''
+          أنت سوبر بوت للبرمجة وإدارة المشاريع على GitHub
+          - افهم أي أوامر (عربي/إنجليزي/عامية/مختلطة)، ولو الأمر غير واضح اسأل المستخدم وحدد المطلوب.
+          - نفذ أوامر مثل: "ابني لي تطبيق أندرويد فيه شات وفيديو وصلاحيات وقاعدة بيانات"، "أضف لي مشروع ويب كامل"، "احذف كل ملفات الصور"، "حلل الكود وأصلح كل المشاكل"، "ولّد اختبارات تغطي كل شيء"، "اعمل لي README وDocs كاملة"، "رجع كل حاجة زي الأسبوع اللي فات"، "ارفع التطبيق على Play Store"، "قفل ملفات معينة"، إلخ.
+          - لو أمر فيه حذف جماعي/تعديل خطير، وضّح للمستخدم وخذ تأكيد قبل التنفيذ.
+          - أي مشروع تولده يكون كامل، منظم، فيه كل الملفات (build, manifest, resources, main code, tests, docs).
+          - دعم توليد مشاريع أندرويد ضخمة (Kotlin/Java/Flutter/React Native)، مع كل ملفاتها وملفات البناء والتوثيق.
+          - دعم توليد مشاريع بأي لغة أو تقنية أو معمارية (monorepo, microservices, plugins, إلخ).
+          - نفذ تحليل أمان وكود لأي أمر قبل التنفيذ، ولو فيه خطأ أو خطر اشرح السبب واقترح حلول.
+          - نفذ أوامر Undo/Redo/History، واحتفظ بنسخ احتياطية تلقائية.
+          - لو طلب المستخدم شرح أو تلخيص أو مقارنة أو تحليل، رد عليه بتفصيل وذكاء.
+          - لو طلب منه ينفذ أمر على كل المشروع أو مجلد كامل (bulk)، نفذها بأمان وكفاءة.
+          - لو طلب نشر أو رفع المشروع على أي منصة، وضّح الخطوات أو نفّذ ما يمكن تلقائيًا.
+          - إذا كان هناك ملف يجب توليده، أرسله بـ:
+          ```file
+          name=اسم_الملف
+          محتوى_الملف
+          ```
+          - لو فيه عدة ملفات، كل ملف في block منفصل.
+          - لو طلب مثال أو اختبار أو وثيقة أو شرح، أضفهم بنفس الشكل.
+          - لو الأمر غير منطقي أو خطير أو ناقص بيانات، أوقف التنفيذ واطلب من المستخدم توضيح أو تأكيد.
+          - بعد كل عملية، وضّح بالضبط ما تم وما هي الخطوات القادمة، ولو فيه مشاكل أو تحذيرات اذكرها.
+          '''
+
+          # إرسال الطلب للذكاء الاصطناعي
+          resp = openai.chat.completions.create(
+              model="gpt-4o",
+              messages=[
+                  {"role": "system", "content": SYSTEM_PROMPT},
+                  {"role": "user", "content": user_input}
+              ],
+              max_tokens=4096,
+              temperature=0.1
+          )
+          answer = resp.choices[0].message.content.strip()
+
+          # استخراج كل الملفات من الرد (حتى لو عددها ضخم)
+          files = re.findall(r"```file\s+name=([^\n]+)\n(.*?)```", answer, re.DOTALL)
+          os.makedirs(".github/bot_backups", exist_ok=True)
+          log = []
+
+          for fname, content in files:
+              if os.path.exists(fname):
+                  ts = datetime.now().strftime('%Y%m%d%H%M%S')
+                  bak = f".github/bot_backups/{fname.replace('/','_')}.{ts}.bak"
+                  os.makedirs(os.path.dirname(bak), exist_ok=True)
+                  shutil.copy2(fname, bak)
+                  log.append(f"نسخة احتياطية: {bak}")
+              os.makedirs(os.path.dirname(fname), exist_ok=True)
+              with open(fname, "w", encoding="utf-8") as f:
+                  f.write(content)
+              log.append(f"تم إنشاء/تعديل: {fname}")
+
+          # سجل العمليات ـ مع معالجة الأخطاء
+          errors = []
+          if "خطأ" in answer or "error" in answer.lower():
+              errors.append("⚠️ قد يكون هناك أخطاء أو مشاكل في جزء من الكود. راجع التفاصيل في الأعلى.")
+
+          with open("results.log", "w", encoding="utf-8") as out:
+              out.write("**رد الذكاء الاصطناعي:**\n\n")
+              out.write(answer + "\n\n")
+              if log:
+                  out.write("**سجل العمليات:**\n")
+                  out.write("\n".join(log) + "\n\n")
+              if errors:
+                  out.write("**تحذيرات:**\n")
+                  out.write("\n".join(errors))
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git diff --staged --quiet || (git commit -m "Super AI Bot: auto changes" && git push)
+
+      - name: Add comment to issue
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body-path: results.log
