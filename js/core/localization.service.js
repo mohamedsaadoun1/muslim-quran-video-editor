@@ -1,11 +1,17 @@
 // js/core/localization.service.js
 
-import errorLogger from './error-logger.js';
-import eventAggregator from './event-aggregator.js'; // Optional: To publish lang change events
-import { ACTIONS, EVENTS, LS_KEY_CURRENT_LANGUAGE } from '../config/app.constants.js'; // If language is in state
+// errorLogger, eventAggregator, stateStore, and constants will be passed as dependencies
+// or imported where appropriate in the final integrated application.
+// For this standalone file, we'll assume placeholders or define minimal versions
+// if absolutely necessary for the logic to be understandable.
+
+// Placeholder for app.constants.js imports (in a real app, these come from the constants file)
+const LS_KEY_CURRENT_LANGUAGE = 'MQVE_currentLanguage'; // Example, use constant from app.constants.js
+const EVENTS = {
+  LANGUAGE_CHANGED: 'app:languageChanged', // Example, use constant
+};
 
 // Define available languages and their translation files (or inline data)
-// For a real app, these might be separate JSON files (e.g., locales/ar.json, locales/en.json)
 const availableLanguages = {
   ar: {
     name: 'العربية',
@@ -24,13 +30,13 @@ const availableLanguages = {
       // Initial Screen
       'initialScreen.myProjects': 'مشاريعي المحفوظة',
       'initialScreen.noProjects': 'لا توجد مشاريع محفوظة بعد.',
-      'initialScreen.copyright': `الحقوق محفوظة © {year} محرر فيديوهات القرآن الكريم`, // {year} is a placeholder
+      'initialScreen.copyright': `الحقوق محفوظة © {year} محرر فيديوهات القرآن الكريم`,
       // Editor Screen
       'editorScreen.backButton.title': 'العودة للقائمة الرئيسية',
       'editorScreen.projectTitle.default': 'مشروع جديد',
       'editorScreen.projectTitle.edit.tooltip': 'اضغط للتعديل',
       'editorScreen.saveButton.title': 'حفظ المشروع',
-      // Panels
+      // Panels & Controls - Abbreviated for brevity, include all your keys
       'panel.quran.title': 'القرآن الكريم',
       'panel.quran.surah': 'السورة:',
       'panel.quran.ayahFrom': 'من آية:',
@@ -44,16 +50,31 @@ const availableLanguages = {
       'panel.background.aiSuggest': 'اقتراح خلفية (AI)',
       'panel.background.aiLoading': 'جاري تحميل الاقتراحات...',
       'panel.background.color': 'أو اختر لون خلفية:',
-      // ... Add many more keys as you develop UI elements
+      'panel.textEffects.title': 'النص والتأثيرات',
+      'panel.textEffects.videoDimensions': 'أبعاد وفلاتر الفيديو',
+      'panel.textEffects.aspectRatio': 'أبعاد الفيديو:',
+      'panel.textEffects.videoFilter': 'فلاتر الفيديو:',
+      'panel.textEffects.textSettings': 'إعدادات النص',
+      'panel.textEffects.quranFont': 'خط القرآن:',
+      'panel.textEffects.fontSize': 'حجم الخط:',
+      'panel.textEffects.fontColor': 'لون الخط:',
+      'panel.textEffects.ayahBgColor': 'لون خلفية الآية:',
+      'panel.textEffects.textEffect': 'تأثير ظهور النص:',
+      'panel.audio.title': 'الصوت',
+      'panel.audio.recitationSettings': 'إعدادات التلاوة',
+      'panel.audio.delayBetweenAyahs': 'تأخير بين الآيات (ثواني):',
+      'panel.audio.extractAudio': 'استخراج الصوت',
+      'panel.audio.addSound': 'إضافة صوت/موسيقى',
       'exportPanel.title': 'تصدير الفيديو',
       'exportPanel.resolution': 'دقة التصدير:',
       'exportPanel.format': 'صيغة الفيديو:',
       'exportPanel.fps': 'معدل الإطارات (FPS):',
       'exportPanel.button': 'تصدير الفيديو',
-      'exportPanel.note.webm': 'WebM (جودة عالية، حجم أصغر، قد لا يعمل على جميع الأجهزة بدون تحويل)',
-      'exportPanel.note.mp4': 'MP4 (توافق أوسع - قيد التطوير)',
-      'exportPanel.note.gif': 'GIF (متحرك، بدون صوت، قد يستغرق وقتًا أطول)',
+      'exportPanel.note.webm': 'WebM (جودة عالية، حجم أصغر)',
+      'exportPanel.note.mp4': 'MP4 (توافق أوسع)',
+      'exportPanel.note.gif': 'GIF (متحرك، بدون صوت)',
       'exportPanel.progress': 'تقدم التصدير',
+      // ... (أضف باقي المفاتيح كما هو الحال في النسخة السابقة للملف)
     }
   },
   en: {
@@ -79,7 +100,7 @@ const availableLanguages = {
       'editorScreen.projectTitle.default': 'New Project',
       'editorScreen.projectTitle.edit.tooltip': 'Click to edit',
       'editorScreen.saveButton.title': 'Save Project',
-      // Panels
+      // Panels & Controls - Abbreviated
       'panel.quran.title': 'Holy Quran',
       'panel.quran.surah': 'Surah:',
       'panel.quran.ayahFrom': 'From Ayah:',
@@ -93,16 +114,31 @@ const availableLanguages = {
       'panel.background.aiSuggest': 'AI Suggest Background',
       'panel.background.aiLoading': 'Loading suggestions...',
       'panel.background.color': 'Or choose background color:',
-      // ... Add English translations
+      'panel.textEffects.title': 'Text & Effects',
+      'panel.textEffects.videoDimensions': 'Video Dimensions & Filters',
+      'panel.textEffects.aspectRatio': 'Video Aspect Ratio:',
+      'panel.textEffects.videoFilter': 'Video Filters:',
+      'panel.textEffects.textSettings': 'Text Settings',
+      'panel.textEffects.quranFont': 'Quran Font:',
+      'panel.textEffects.fontSize': 'Font Size:',
+      'panel.textEffects.fontColor': 'Font Color:',
+      'panel.textEffects.ayahBgColor': 'Ayah Background Color:',
+      'panel.textEffects.textEffect': 'Text Appearance Effect:',
+      'panel.audio.title': 'Audio',
+      'panel.audio.recitationSettings': 'Recitation Settings',
+      'panel.audio.delayBetweenAyahs': 'Delay Between Ayahs (sec):',
+      'panel.audio.extractAudio': 'Extract Audio',
+      'panel.audio.addSound': 'Add Sound/Music',
       'exportPanel.title': 'Export Video',
       'exportPanel.resolution': 'Export Resolution:',
       'exportPanel.format': 'Video Format:',
       'exportPanel.fps': 'Framerate (FPS):',
       'exportPanel.button': 'Export Video',
-      'exportPanel.note.webm': 'WebM (High quality, smaller size, may not play on all devices without conversion)',
-      'exportPanel.note.mp4': 'MP4 (Wider compatibility - Under Development)',
-      'exportPanel.note.gif': 'GIF (Animated, no audio, may take longer)',
+      'exportPanel.note.webm': 'WebM (High quality, smaller size)',
+      'exportPanel.note.mp4': 'MP4 (Wider compatibility)',
+      'exportPanel.note.gif': 'GIF (Animated, no audio)',
       'exportPanel.progress': 'Export Progress',
+      // ... (أضف باقي المفاتيح بالإنجليزية)
     }
   }
 };
@@ -111,35 +147,39 @@ let currentLanguageCode = 'ar'; // Default language
 let currentTranslations = availableLanguages[currentLanguageCode].translations;
 let currentDirection = availableLanguages[currentLanguageCode].dir;
 
-// Reference to stateStore if language is managed there
-let _stateStore = null;
+// To store injected dependencies
+let dependencies = {
+  errorLogger: console, // Fallback
+  eventAggregator: { publish: () => {} }, // Fallback
+  // stateStore: null // If language selection is driven by global state
+};
 
 const localizationService = {
   /**
    * Initializes the localization service.
-   * @param {object} dependencies - Core dependencies.
-   * @param {import('../core/state-store.js').default} dependencies.stateStore - The state store.
+   * @param {object} injectedDependencies - Core dependencies (errorLogger, eventAggregator, etc.).
    */
-  initialize(dependencies = {}) {
-    // _stateStore = dependencies.stateStore; // If language selection is driven by global state
+  initialize(injectedDependencies = {}) {
+    dependencies = { ...dependencies, ...injectedDependencies };
 
-    // For now, try to load preferred language from localStorage or default to 'ar'
     try {
-        const savedLang = localStorage.getItem(LS_KEY_CURRENT_LANGUAGE); // Define this constant
+        const savedLang = localStorage.getItem(LS_KEY_CURRENT_LANGUAGE);
         if (savedLang && availableLanguages[savedLang]) {
-            this.setLanguage(savedLang, false); // Set without publishing event if it's initial load
+            // Set without publishing event if it's initial load and no change
+            this.setLanguage(savedLang, false);
         } else {
-            this.setLanguage(currentLanguageCode, false); // Set default
+            // Set default language if nothing is saved or invalid
+            this.setLanguage(currentLanguageCode, false); // `currentLanguageCode` is 'ar' by default
         }
     } catch (e) {
-        errorLogger.handleError({
+        (dependencies.errorLogger.handleError || console.error)({ // Use injected logger
             error: e,
             message: 'Error initializing language from localStorage.',
             origin: 'LocalizationService.initialize'
         });
         this.setLanguage('ar', false); // Fallback to Arabic
     }
-    // console.info(`[LocalizationService] Initialized with language: ${currentLanguageCode}`);
+    // console.info(`[LocalizationService] Initialized. Current language: ${currentLanguageCode}`);
   },
 
   /**
@@ -154,33 +194,38 @@ const localizationService = {
       currentLanguageCode = langCode;
       currentTranslations = availableLanguages[langCode].translations;
       currentDirection = availableLanguages[langCode].dir;
-      document.documentElement.lang = langCode;
-      document.documentElement.dir = currentDirection;
+
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.lang = currentLanguageCode;
+        document.documentElement.dir = currentDirection;
+      }
 
       try {
-        localStorage.setItem(LS_KEY_CURRENT_LANGUAGE, langCode);
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(LS_KEY_CURRENT_LANGUAGE, currentLanguageCode);
+        }
       } catch (e) {
-         errorLogger.handleError({
+         (dependencies.errorLogger.handleError || console.error)({
             error: e,
-            message: `Failed to save language '${langCode}' to localStorage.`,
+            message: `Failed to save language '${currentLanguageCode}' to localStorage.`,
             origin: 'LocalizationService.setLanguage'
         });
       }
 
-      if (publishChange && oldLangCode !== langCode) {
-        eventAggregator.publish(EVENTS.LANGUAGE_CHANGED, { // Define EVENTS.LANGUAGE_CHANGED
+      if (publishChange && oldLangCode !== currentLanguageCode) {
+        dependencies.eventAggregator.publish(EVENTS.LANGUAGE_CHANGED, {
           langCode: currentLanguageCode,
           dir: currentDirection
         });
-        // console.log(`[LocalizationService] Language changed to: ${langCode}`);
+        // console.log(`[LocalizationService] Language changed to: ${currentLanguageCode}`);
       }
-      // If using stateStore for language:
-      // if (_stateStore && _stateStore.getState().appSettings.language !== langCode) {
-      //   _stateStore.dispatch(ACTIONS.SET_APP_LANGUAGE, langCode); // Define this action
+      // Example: If language is part of global state managed by stateStore
+      // if (dependencies.stateStore && dependencies.stateStore.getState().appSettings.language !== currentLanguageCode) {
+      //   dependencies.stateStore.dispatch(ACTIONS.SET_APP_LANGUAGE, currentLanguageCode);
       // }
       return true;
     } else {
-      errorLogger.logWarning({
+      (dependencies.errorLogger.logWarning || console.warn)({
         message: `Language code "${langCode}" is not available.`,
         origin: 'LocalizationService.setLanguage',
         context: { requestedLang: langCode, available: Object.keys(availableLanguages) }
@@ -200,11 +245,12 @@ const localizationService = {
     let translation = currentTranslations[key];
 
     if (translation === undefined) {
-      // errorLogger.logWarning({ // Can be too noisy during development
+      // This can be noisy during development if keys are temporarily missing
+      // (dependencies.errorLogger.logWarning || console.warn)({
       //   message: `Translation not found for key: "${key}" in language "${currentLanguageCode}". Returning key.`,
       //   origin: 'LocalizationService.translate',
       // });
-      return key; // Fallback to the key itself
+      return `%%${key}%%`; // Fallback to the key itself, clearly marked
     }
 
     if (placeholders && typeof placeholders === 'object') {
@@ -241,23 +287,21 @@ const localizationService = {
   getAvailableLanguages() {
     const langList = {};
     for (const code in availableLanguages) {
-      langList[code] = { name: availableLanguages[code].name, dir: availableLanguages[code].dir };
+      if (Object.hasOwnProperty.call(availableLanguages, code)) {
+         langList[code] = { name: availableLanguages[code].name, dir: availableLanguages[code].dir };
+      }
     }
     return langList;
   }
 };
 
 // The initialization function to be called by moduleBootstrap
-// This module doesn't have complex async init needs beyond loading from localStorage,
-// so it can be simpler.
-export function initializeLocalizationService(dependencies) {
-  localizationService.initialize(dependencies);
-  // console.info('[LocalizationService] Initialized wrapper.');
-  // No specific instance or complex API returned, the service itself is the API.
-  // Other modules will import `localizationService` directly.
-  // However, to fit the moduleBootstrap pattern, we can return the service.
+export function initializeLocalizationService(injectedDependencies) {
+  localizationService.initialize(injectedDependencies);
+  // console.info('[LocalizationServiceWrapper] Initialized.');
+  // Return the service so it can be potentially injected into other modules if moduleBootstrap handles that
   return localizationService;
 }
 
-// Export the service itself for direct use by other modules
+// Export the service itself for direct use by other modules if they import it directly.
 export default localizationService;
