@@ -5,46 +5,55 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>محرر فيديوهات القرآن الكريم</title>
   <link rel="stylesheet" href="css/style.css">
-  <!-- Google Fonts (يمكنك إبقائها كما هي أو نقلها للـ CSS) -->
+  <!-- Google Fonts (Amiri Quran, Noto Naskh Arabic, Tajawal) -->
   <link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Noto+Naskh+Arabic:wght@400;500;700&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
 
   <!-- PWA Manifest & Meta Tags -->
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="محرر القرآن">
-  <link rel="icon" href="icons/icon-72x72.png" type="image/x-icon"> <!-- استخدام أيقونة من مجلد icons -->
-  <link rel="shortcut icon" href="icons/icon-72x72.png" type="image/x-icon">
-  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192x192.png"> <!-- استخدام أيقونة أكبر لـ Apple -->
-  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png">
-  <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png">
-  <meta name="theme-color" content="#00796b">
+  <meta name="apple-mobile-web-app-title" content="محرر القرآن"> <!-- Short name for iOS Home Screen -->
+  
+  <!-- Favicon and Apple Touch Icon (Using icons from icons/ folder as specified in manifest) -->
+  <link rel="icon" href="icons/icon-192x192.png" type="image/png"> <!-- Main favicon -->
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192x192.png"> <!-- Or specific 180x180 if available -->
+  <!-- Other sizes specified in manifest.json will be used by supporting PWA platforms -->
+  
+  <meta name="theme-color" content="#00796b"> <!-- Main theme color (Teal) -->
 
   <!-- Font Awesome for Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-
-  <!-- External Libraries (CDN) - أبقيتها كما هي من ملفك الأصلي -->
-  <!-- إذا كنت ستدير هذه الاعتماديات عبر وحدات JS، فقد لا تحتاج لتحميلها هنا مباشرة -->
+  
+  <!-- External Libraries (CDN) -->
+  <!-- TinyColor for color manipulation (e.g., text.rendering.logic.js might use it) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tinycolor/1.6.0/tinycolor.min.js" integrity="sha512-AvEgNHj5uTbsQINnrR0FzV0XgVfTAB3LhU9d7W3D6HFLgDkS888CEKVTb3gVlXnFhQ9mP8xHjR7fH6nPB4J+g==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
+  <!-- Axios for HTTP requests (if quran.api.client or pexels.api.client uses it instead of fetch) -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js" defer></script>
+  <!-- CCapture.js for video recording -->
   <script src="https://cdn.jsdelivr.net/npm/ccapture.js@1.1.0/build/CCapture.all.min.js" defer></script>
+  <!-- FFmpeg.wasm (main library) - Load if using FFmpeg integration heavily at startup -->
+  <!-- For on-demand loading, this script tag might be added dynamically by ffmpeg.integration.js -->
+  <!-- <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.0/dist/ffmpeg.min.js" defer></script> -->
+
 
 </head>
-<body class="light-theme"> <!-- السمة الابتدائية يتم التحكم بها الآن عبر stateStore -->
+<body class="dark-theme"> <!-- Default to dark theme, JS will toggle 'light-theme' based on state/preference -->
 
   <div id="app-container">
-    <!-- الشاشة الأولية (سيتم التحكم في عرضها عبر JS) -->
-    <div id="initial-screen" class="screen"> <!-- .active-screen ستُضاف/تُزال بواسطة JS -->
+    <!-- الشاشة الأولية (قائمة المشاريع وإنشاء جديد) -->
+    <div id="initial-screen" class="screen"> <!-- JS will add 'active-screen' -->
       <header class="app-header">
-        <h1>محرر فيديوهات القرآن</h1>
-        <button id="theme-toggle-initial" class="theme-button icon-button" title="تبديل السمة"><i class="fas fa-moon"></i></button> <!-- أيقونة مبدئية، ستتغير -->
+        <h1 id="app-header-title">محرر فيديوهات القرآن</h1> <!-- Added ID for localization if needed -->
+        <button id="theme-toggle-initial" class="theme-button icon-button" title="تبديل السمة">
+            <i class="fas fa-moon"></i> <!-- Initial icon, JS will update based on theme -->
+        </button>
       </header>
       <main>
         <section class="projects-section">
           <h2>مشاريعي المحفوظة</h2>
-          <div id="projects-list-container"> <!-- تم تغيير الـ ID لتمييزه عن أي متغير projects-list -->
+          <div id="projects-list-container">
+            <!-- Project cards will be injected here by project-list.renderer.js -->
             <p id="no-projects-message">لا توجد مشاريع محفوظة بعد.</p>
-            <!-- بطاقات المشاريع سيتم حقنها بواسطة js/features/project-manager/project-list.renderer.js -->
           </div>
         </section>
       </main>
@@ -54,70 +63,76 @@
       </footer>
     </div>
 
-    <!-- شاشة المحرر الرئيسية (سيتم التحكم في عرضها عبر JS) -->
-    <div id="editor-screen" class="screen">
+    <!-- شاشة المحرر الرئيسية -->
+    <div id="editor-screen" class="screen"> <!-- JS will add 'active-screen' -->
       <header class="editor-top-bar">
         <button id="back-to-initial-screen-btn" class="icon-button" title="العودة للقائمة الرئيسية"><i class="fas fa-arrow-left"></i></button>
         <h2 id="current-project-title-editor" class="project-title-editable" contenteditable="false" spellcheck="false" title="اضغط للتعديل">مشروع جديد</h2>
         <div class="editor-top-actions">
           <button id="save-project-btn-editor" class="action-button editor-save-btn" title="حفظ المشروع"><i class="fas fa-save"></i> حفظ</button>
-          <button id="theme-toggle-editor" class="theme-button icon-button" title="تبديل السمة"><i class="fas fa-moon"></i></button>
+          <button id="theme-toggle-editor" class="theme-button icon-button" title="تبديل السمة">
+              <i class="fas fa-moon"></i> <!-- Initial icon, JS will update -->
+          </button>
         </div>
       </header>
 
       <main id="editor-main-area-new">
-          <div id="video-preview-background-blur"></div>
-          <div id="video-preview-card-container">
-            <div id="video-preview-container">
-              <canvas id="video-preview-canvas"></canvas>
-              <div id="preview-overlay-content" style="pointer-events: none;">
-                <h3 id="preview-surah-title-overlay" class="arabic-text"></h3>
-                <div id="preview-ayah-text-overlay" class="arabic-text"></div>
-                <div id="preview-translation-text-overlay" class="translation-text-overlay"></div>
-              </div>
-              <audio id="main-audio-player" style="display:none;"></audio>
+        <div id="video-preview-background-blur"></div> <!-- For blurred background effect -->
+        <div id="video-preview-card-container">   <!-- The main "phone-like" preview card -->
+          <div id="video-preview-container">     <!-- Container that will have the aspect ratio -->
+            <canvas id="video-preview-canvas"></canvas>
+            <div id="preview-overlay-content" style="pointer-events: none;"> <!-- For text, transparent -->
+              <h3 id="preview-surah-title-overlay" class="arabic-text"></h3>
+              <div id="preview-ayah-text-overlay" class="arabic-text"></div>
+              <div id="preview-translation-text-overlay" class="translation-text-overlay"></div>
             </div>
+            <!-- This audio player is for the main Quran recitation -->
+            <audio id="main-audio-player" style="display:none;"></audio>
+            <!-- If using a video background, you might need a dedicated video element for it, e.g.: -->
+            <!-- <video id="background-video-player-element-id" style="display:none;" muted loop></video> -->
           </div>
+        </div>
       </main>
 
-      <footer id="editor-controls-area">
-          <section id="playback-timeline-section">
-              <div id="timeline-container">
-                <span id="current-time-display">0:00</span>
-                <input type="range" id="timeline-slider" value="0" min="0" max="100" step="0.1" title="شريط الزمن"/>
-                <span id="total-time-display">0:00</span>
-              </div>
-          </section>
-          <section id="main-playback-controls">
-              <button id="undo-btn" class="playback-icon-button icon-button" title="تراجع" disabled><i class="fas fa-undo"></i></button>
-              <button id="prev-ayah-btn" class="playback-icon-button icon-button large" title="الآية السابقة"><i class="fas fa-backward-step"></i></button>
-              <button id="play-pause-main-btn" class="playback-icon-button icon-button extra-large" title="تشغيل"><i class="fas fa-play"></i></button>
-              <button id="next-ayah-btn" class="playback-icon-button icon-button large" title="الآية التالية"><i class="fas fa-forward-step"></i></button>
-              <button id="redo-btn" class="playback-icon-button icon-button" title="إعادة" disabled><i class="fas fa-redo"></i></button>
-          </section>
+      <footer id="editor-controls-area"> <!-- This footer contains playback and panel tabs -->
+        <section id="playback-timeline-section">
+          <div id="timeline-container">
+            <span id="current-time-display">0:00</span>
+            <input type="range" id="timeline-slider" value="0" min="0" max="100" step="0.1" title="شريط الزمن"/>
+            <span id="total-time-display">0:00</span>
+          </div>
+        </section>
+        <section id="main-playback-controls">
+          <button id="undo-btn" class="playback-icon-button icon-button" title="تراجع" disabled><i class="fas fa-undo"></i></button>
+          <button id="prev-ayah-btn" class="playback-icon-button icon-button large" title="الآية السابقة"><i class="fas fa-backward-step"></i></button>
+          <button id="play-pause-main-btn" class="playback-icon-button icon-button extra-large" title="تشغيل">
+              <i class="fas fa-play"></i> <!-- JS updates this to fa-pause -->
+          </button>
+          <button id="next-ayah-btn" class="playback-icon-button icon-button large" title="الآية التالية"><i class="fas fa-forward-step"></i></button>
+          <button id="redo-btn" class="playback-icon-button icon-button" title="إعادة" disabled><i class="fas fa-redo"></i></button>
+        </section>
 
-          <nav id="main-bottom-tab-bar">
-            <!-- الأزرار ستُربط بوحدات js/shared-ui-components/panel.manager.js -->
-            <button class="main-tab-button active" data-panel-id="quran-selection-panel" title="القرآن الكريم وإعدادات التلاوة">
-              <i class="fas fa-book-quran"></i><span>القرآن</span>
-            </button>
-            <button class="main-tab-button" data-panel-id="background-settings-panel" title="إعدادات الخلفية">
-              <i class="fas fa-image"></i><span>الخلفية</span>
-            </button>
-            <button class="main-tab-button" data-panel-id="effects-text-settings-panel" title="إعدادات النص والتأثيرات">
-              <i class="fas fa-magic"></i><span>النص</span>
-            </button>
-            <button class="main-tab-button" data-panel-id="audio-settings-panel" title="إعدادات الصوت">
-              <i class="fas fa-music"></i><span>الصوت</span>
-            </button>
-            <button class="main-tab-button" data-panel-id="export-settings-panel" title="تصدير الفيديو">
-                <i class="fas fa-share-square"></i><span>تصدير</span>
-            </button>
-          </nav>
+        <nav id="main-bottom-tab-bar">
+          <button class="main-tab-button active" data-panel-id="quran-selection-panel" title="القرآن الكريم وإعدادات التلاوة">
+            <i class="fas fa-book-quran"></i><span>القرآن</span>
+          </button>
+          <button class="main-tab-button" data-panel-id="background-settings-panel" title="إعدادات الخلفية">
+            <i class="fas fa-image"></i><span>الخلفية</span>
+          </button>
+          <button class="main-tab-button" data-panel-id="effects-text-settings-panel" title="إعدادات النص والتأثيرات">
+            <i class="fas fa-magic"></i><span>النص</span>
+          </button>
+          <button class="main-tab-button" data-panel-id="audio-settings-panel" title="إعدادات الصوت">
+            <i class="fas fa-volume-up"></i><span>الصوت</span> <!-- Changed icon to volume-up -->
+          </button>
+          <button class="main-tab-button" data-panel-id="export-settings-panel" title="تصدير الفيديو النهائي">
+            <i class="fas fa-share-square"></i><span>تصدير</span>
+          </button>
+        </nav>
       </footer>
 
+      <!-- Container for Control Panels that slide up -->
       <div id="active-control-panels-container">
-        <!-- لوحات التحكم (سيتم التحكم في عرضها ومحتواها بواسطة JavaScript) -->
         <!-- Quran Selection Panel -->
         <div id="quran-selection-panel" class="control-panel">
           <header class="panel-header">
@@ -125,7 +140,6 @@
             <button class="panel-action-button close-panel-btn icon-button" data-panel-id="quran-selection-panel" title="إغلاق اللوحة"><i class="fas fa-times"></i></button>
           </header>
           <div class="panel-content">
-            <!-- سيتم حقن عناصر التحكم بواسطة js/features/quran-provider/quran-selector.ui.js -->
             <div><label for="surah-select">السورة:</label><select id="surah-select" title="اختر السورة"></select></div>
             <div><label for="ayah-start-select">من آية:</label><select id="ayah-start-select" title="اختر آية البداية"></select></div>
             <div><label for="ayah-end-select">إلى آية:</label><select id="ayah-end-select" title="اختر آية النهاية"></select></div>
@@ -144,38 +158,36 @@
             <button class="panel-action-button close-panel-btn icon-button" data-panel-id="background-settings-panel" title="إغلاق اللوحة"><i class="fas fa-times"></i></button>
           </header>
           <div class="panel-content">
-             <!-- سيتم حقن عناصر التحكم بواسطة js/features/background-controller/* -->
             <div><label for="import-background-input">استيراد خلفية (صورة/فيديو):</label><input type="file" id="import-background-input" accept="image/*,video/*" title="اختر ملف صورة أو فيديو كخلفية"></div>
             <button id="ai-suggest-bg-btn" class="button-secondary" title="اقتراح خلفيات مناسبة باستخدام الذكاء الاصطناعي">اقتراح خلفية (AI)</button>
             <div id="ai-bg-suggestions-loader" style="display:none;">جاري تحميل الاقتراحات...</div>
-            <div id="ai-bg-suggestions-container"></div>
-             <hr class="panel-divider">
-             <div><label for="background-color-picker">أو اختر لون خلفية:</label><input type="color" id="background-color-picker" value="#0D0D0D" title="اختر لونًا ثابتًا للخلفية"></div>
+            <div id="ai-bg-suggestions-container"></div> <!-- For displaying Pexels suggestions -->
+            <hr class="panel-divider">
+            <div><label for="background-color-picker">أو اختر لون خلفية:</label><input type="color" id="background-color-picker" value="#0D0D0D" title="اختر لونًا ثابتًا للخلفية"></div>
           </div>
         </div>
 
-        <!-- Text & Effects Settings Panel -->
+        <!-- Text & Effects Settings Panel (combined aspect ratio/filter with text) -->
         <div id="effects-text-settings-panel" class="control-panel">
           <header class="panel-header">
             <h3>النص والتأثيرات</h3>
             <button class="panel-action-button close-panel-btn icon-button" data-panel-id="effects-text-settings-panel" title="إغلاق اللوحة"><i class="fas fa-times"></i></button>
           </header>
           <div class="panel-content">
-             <!-- سيتم حقن عناصر التحكم بواسطة js/features/text-engine/* و js/features/canvas-composer/* -->
             <h4>أبعاد وفلاتر الفيديو</h4>
-            <div><label for="aspect-ratio-select">أبعاد الفيديو:</label><select id="aspect-ratio-select" title="اختر نسبة أبعاد الفيديو النهائية"></select></div>
+            <div><label for="aspect-ratio-select">أبعاد الفيديو:</label><select id="aspect-ratio-select" title="اختر نسبة أبعاد الفيديو"></select></div>
             <div><label for="video-filter-select">فلاتر الفيديو:</label><select id="video-filter-select" title="اختر فلترًا مرئيًا للفيديو"></select></div>
             <hr class="panel-divider">
             <h4>إعدادات النص</h4>
             <div><label for="font-family-select">خط القرآن:</label><select id="font-family-select" title="اختر خط عرض نص القرآن"></select></div>
             <div><label for="font-size-slider">حجم الخط:</label>
                 <div style="display:flex; align-items:center; gap:10px;">
-                    <input type="range" id="font-size-slider" min="16" max="120" value="48" title="تحكم في حجم خط نص الآية">
-                    <span id="font-size-value-display" style="min-width:40px; text-align:right;">48px</span>
+                    <input type="range" id="font-size-slider" min="12" max="150" value="48" title="تحكم في حجم خط نص الآية">
+                    <span id="font-size-value-display" style="min-width:45px; text-align:right;">48px</span>
                 </div>
             </div>
-            <div><label for="font-color-picker">لون الخط:</label><input type="color" id="font-color-picker" value="#FFFFFF" title="اختر لون خط نص الآية والترجمة"></div>
-            <div><label for="ayah-text-bg-color-picker">لون خلفية الآية:</label><input type="color" id="ayah-text-bg-color-picker" value="rgba(0,0,0,0.3)" title="اختر لونًا لخلفية مربع نص الآية"></div>
+            <div><label for="font-color-picker">لون الخط:</label><input type="color" id="font-color-picker" value="#FFFFFF" title="اختر لون خط النص"></div>
+            <div><label for="ayah-text-bg-color-picker">لون خلفية نص الآية:</label><input type="color" id="ayah-text-bg-color-picker" value="rgba(0,0,0,0.25)" title="اختر لون خلفية للآية"></div>
             <div><label for="text-animation-select">تأثير ظهور النص:</label><select id="text-animation-select" title="اختر تأثيرًا لظهور النص"></select></div>
           </div>
         </div>
@@ -187,13 +199,33 @@
               <button class="panel-action-button close-panel-btn icon-button" data-panel-id="audio-settings-panel" title="إغلاق اللوحة"><i class="fas fa-times"></i></button>
             </header>
             <div class="panel-content">
-              <!-- سيتم حقن عناصر التحكم بواسطة js/features/audio-engine/* -->
               <h4>إعدادات التلاوة</h4>
-              <div id="audio-preview-status-text" style="text-align:center; margin: 5px 0; min-height: 1.2em; font-size: 0.85em;"></div>
+              <div id="audio-preview-status-text" style="text-align:center; margin: 5px 0; min-height: 1.2em; font-size: 0.85em; color:var(--current-text-secondary-color)"></div>
               <div><label for="delay-between-ayahs-input">تأخير بين الآيات (ثواني):</label><input type="number" id="delay-between-ayahs-input" value="1" min="0" max="10" step="0.1" title="مدة التأخير بين الآيات"></div>
               <hr class="panel-divider">
-              <h4>(مستقبلي) موسيقى خلفية</h4>
-              <button id="add-bg-music-btn" class="button-secondary" disabled title="إضافة موسيقى خلفية (قيد التطوير)"><i class="fas fa-music"></i> إضافة موسيقى</button>
+              <h4>موسيقى خلفية (تجريبي)</h4>
+              <div>
+                <label for="background-audio-file-input">اختر ملف صوتي كخلفية:</label>
+                <input type="file" id="background-audio-file-input" accept="audio/*">
+              </div>
+              <div id="current-bg-audio-info" style="font-size: 0.8em; margin-top: 5px;"></div>
+              <div>
+                <label for="background-audio-volume-slider">مستوى صوت الخلفية:</label>
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <input type="range" id="background-audio-volume-slider" min="0" max="1" step="0.01" value="0.3">
+                  <span id="background-audio-volume-value">30%</span>
+                </div>
+              </div>
+              <div>
+                <label for="background-audio-loop-checkbox" style="display:inline-flex; align-items:center; gap: 5px;">
+                  <input type="checkbox" id="background-audio-loop-checkbox" checked>
+                  <span>تكرار صوت الخلفية</span>
+                </label>
+              </div>
+              <button id="play-bg-audio-btn" class="button-secondary" title="تشغيل/إيقاف صوت الخلفية" style="margin-top: 10px;"><i class="fas fa-play"></i> تشغيل/إيقاف الخلفية</button>
+              <hr class="panel-divider">
+              <h4>استخراج الصوت (تجريبي)</h4>
+              <button id="extract-audio-from-video-btn" class="button-secondary" title="استخراج الصوت من فيديو الخلفية (يتطلب FFmpeg)" disabled><i class="fas fa-file-audio"></i> استخراج الصوت من الفيديو</button>
             </div>
         </div>
 
@@ -204,13 +236,12 @@
             <button class="panel-action-button close-panel-btn icon-button" data-panel-id="export-settings-panel" title="إغلاق اللوحة"><i class="fas fa-times"></i></button>
           </header>
           <div class="panel-content">
-            <!-- سيتم حقن عناصر التحكم بواسطة js/features/video-exporter/export-settings.ui.js -->
               <div><label for="export-resolution-select">دقة التصدير:</label><select id="export-resolution-select" title="اختر دقة الفيديو المصدر"></select></div>
-              <div><label for="export-format-select">صيغة الفيديو:</label><select id="export-format-select" title="اختر صيغة ملف الفيديو المصدر"></select></div>
-              <div><label for="export-fps-select">معدل الإطارات (FPS):</label><select id="export-fps-select" title="اختر معدل الإطارات في الثانية للفيديو المصدر"></select></div>
-              <button id="export-video-btn" class="button-primary-action" style="width:100%; justify-content: center;"><i class="fas fa-video"></i> تصدير الفيديو</button>
-              <p id="export-process-note" style="font-size: 0.8em; opacity: 0.7; margin-top: 10px; text-align: center;"></p>
-              <div id="export-progress-bar-container" style="display:none; margin-top:15px;">
+              <div><label for="export-format-select">صيغة الفيديو:</label><select id="export-format-select" title="اختر صيغة ملف الفيديو"></select></div>
+              <div><label for="export-fps-select">معدل الإطارات (FPS):</label><select id="export-fps-select" title="اختر معدل الإطارات للفيديو"></select></div>
+              <button id="export-video-btn" class="button-primary-action" style="width:100%; margin-top: 10px;"><i class="fas fa-video"></i> تصدير الفيديو</button>
+              <p id="export-process-note" style="font-size: 0.8em; opacity: 0.8; margin-top: 10px; text-align: center;"></p>
+              <div id="export-progress-bar-container" style="margin-top:15px;"> <!-- JS will toggle display -->
                   <progress id="export-progress-bar" value="0" max="100" style="width:100%;"></progress>
                   <span id="export-progress-text" style="display:block; text-align:center; font-size:0.9em; margin-top:5px;">0%</span>
               </div>
@@ -220,19 +251,22 @@
     </div> <!-- END editor-screen -->
   </div> <!-- END app-container -->
 
-  <div id="global-loading-spinner" class="spinner-overlay" style="display:none;"><div class="spinner"></div></div>
-
-  <!-- نقطة الدخول الرئيسية لتطبيق JavaScript -->
+  <div id="global-loading-spinner" class="spinner-overlay"> <!-- JS will toggle .visible class -->
+    <div class="spinner"></div>
+    <p id="global-loading-message" style="color:white; margin-top:10px;"></p> <!-- Optional loading message -->
+  </div>
+  
+  <!-- Main JavaScript Entry Point -->
   <script type="module" src="js/main.js"></script>
-
+  
   <script>
     // PWA Service Worker Registration
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js').then(registration => {
-          console.log('PWA ServiceWorker: Registered successfully. Scope: ', registration.scope);
+          console.log('PWA ServiceWorker: Registered successfully. Scope:', registration.scope);
         }).catch(registrationError => {
-          console.error('PWA ServiceWorker: Registration failed: ', registrationError);
+          console.error('PWA ServiceWorker: Registration failed:', registrationError);
         });
       });
     }
