@@ -1,115 +1,126 @@
 // js/core/module-bootstrap.js
 
-// Note: The actual initializer functions (e.g., initializeThemeController, initializeProjectManager)
-// will be imported in main.js and passed as part of the moduleConfigs array.
-// This module itself does not need to import them directly, making it more generic.
+// Note: This module does NOT import the actual initialize functions from features/shared-ui.
+// Those imports happen in `main.js`, and an array of module configurations (moduleConfigs)
+// is passed to `initializeAllModules`. This makes module-bootstrap.js more generic.
 
 const moduleBootstrap = {
   /**
    * Initializes all registered modules based on the provided configurations.
-   * @param {Object} coreServices - An object containing core, app-wide services.
-   * @param {import('./state-store.js').default} coreServices.stateStore - The central state store.
-   * @param {import('./event-aggregator.js').default} coreServices.eventAggregator - The event aggregator.
-   * @param {import('./error-logger.js').default} coreServices.errorLogger - The error logging service.
-   * @param {import('./resource-manager.js').default} [coreServices.resourceManager] - Optional, resource manager.
-   * @param {import('./localization.service.js').default} [coreServices.localizationService] - Optional, localization service.
-   * // Add other core services as they are developed and needed by modules.
+   * Iterates through the moduleConfigs array, resolves dependencies, and calls
+   * the initFn for each module. If an initFn returns a value and the config
+   * specifies a 'provides' key, that returned value is added to the pool of
+   * available services for subsequent modules.
    *
-   * @param {Array<ModuleConfig>} moduleConfigs - An array of module configurations.
-   * Each configuration object should have:
-   *   - {string} name: A descriptive name for the module (for logging).
-   *   - {Function} initFn: The initialization function for the module. This function will receive an object of its dependencies.
-   *   - {Array<string>} [dependencies]: An optional array of strings listing the names of services/instances this module depends on.
-   *                                      These names must match keys in `coreServices` or `provides` from previously initialized modules.
-   *   - {string} [provides]: Optional. If this module's initFn returns an instance/API that other modules might need,
-   *                           this string is the key under which it will be made available to subsequent modules.
+   * @param {Object} coreServices - An object containing core, app-wide services.
+   * @param {import('./state-store.js').default} coreServices.stateStore
+   * @param {import('./event-aggregator.js').default} coreServices.eventAggregator
+   * @param {import('./error-logger.js').default} coreServices.errorLogger
+   * @param {import('./resource-manager.js').default} [coreServices.resourceManager]
+   * @param {import('./localization.service.js').default | ReturnType<import('./localization.service.js').initializeLocalizationService>} [coreServices.localizationService] // Could be instance or the raw module
+   * @param {import('../services/local-storage.adapter.js').default} [coreServices.localStorageAdapter]
+   * @param {import('../services/quran.api.client.js').default} [coreServices.quranApiClient]
+   * @param {import('../services/pexels.api.client.js').default} [coreServices.pexelsAPI] // Note the key change for consistency
+   * @param {import('../services/speech.recognition.wrapper.js').default} [coreServices.speechRecognitionWrapper]
+   * @param {import('../services/file.io.utils.js').default} [coreServices.fileIOUtils]
+   * // Add other globally available core services or utility instances here
+   *
+   * @param {Array<ModuleConfig>} moduleConfigs - An array of module configurations from main.js.
+   *
+   * @typedef {Object} ModuleConfig
+   * @property {string} name - Descriptive name of the module (for logging).
+   * @property {Function} initFn - The initialization function (async or sync) that takes a dependencies object.
+   * @property {string[]} [dependencies] - Array of dependency names (keys in coreServices or from other modules' 'provides').
+   * @property {string} [provides] - If the initFn returns a service/API, this is the key it will be registered under for other modules.
+   *
+   * @returns {Promise<void>}
    */
   async initializeAllModules(coreServices, moduleConfigs = []) {
-    const { errorLogger = console } = coreServices; // Fallback errorLogger if not provided
+    // Use the errorLogger from coreServices, or fallback to console if not provided (should always be provided)
+    const errorLogger = coreServices.errorLogger || console;
 
-    // console.info('[ModuleBootstrap] Starting module initialization process...');
+    // console.info('[ModuleBootstrap] Starting initialization of all configured modules...');
 
+    // `availableServicesAndInstances` will hold core services and any APIs/instances
+    // returned by modules that have a 'provides' key in their config.
     const availableServicesAndInstances = { ...coreServices };
 
     for (const moduleConfig of moduleConfigs) {
       if (!moduleConfig || typeof moduleConfig.name !== 'string' || typeof moduleConfig.initFn !== 'function') {
-        errorLogger.logWarning({
-          message: `Invalid module configuration object. Skipping.`,
+        (errorLogger.logWarning || errorLogger.warn).call(errorLogger, {
+          message: `Invalid module configuration object encountered. Skipping.`,
           origin: 'moduleBootstrap.initializeAllModules',
-          context: { config: moduleConfig }
+          context: { receivedConfig: moduleConfig }
         });
         continue;
       }
 
       const { name, initFn, dependencies = [], provides } = moduleConfig;
+      // console.debug(`[ModuleBootstrap] Preparing to initialize module: "${name}"`);
 
       try {
-        // Prepare dependencies for the current module
         const moduleDependencies = {};
-        let allDepsAvailable = true;
+        let allDepsMet = true;
 
+        // Resolve dependencies for the current module
         for (const depName of dependencies) {
           if (Object.prototype.hasOwnProperty.call(availableServicesAndInstances, depName)) {
             moduleDependencies[depName] = availableServicesAndInstances[depName];
           } else {
-            errorLogger.logWarning({
-              message: `Dependency "${depName}" not found for module "${name}". Module might not function correctly.`,
-              origin: 'moduleBootstrap.initializeAllModules',
-              context: { moduleName: name, missingDependency: depName }
+            (errorLogger.logWarning || errorLogger.warn).call(errorLogger, {
+              message: `Dependency "${depName}" NOT FOUND for module "${name}". This module might not function correctly or at all.`,
+              origin: 'moduleBootstrap.resolveDependencies',
+              context: { module: name, missingDependency: depName, available: Object.keys(availableServicesAndInstances) }
             });
-            allDepsAvailable = false; // Or decide to throw/halt if a critical dependency is missing
-            // For now, we'll let it initialize with potentially missing dependencies and log a warning.
+            allDepsMet = false;
+            // Decide on behavior: continue with missing deps, or throw to halt?
+            // For robustness, we might continue, but log a severe warning.
+            // If a critical dependency like 'stateStore' is missing and listed, it's likely a config error.
           }
         }
 
-        // Optional: If you want to be stricter and halt if a dependency is missing, uncomment below.
-        // if (!allDepsAvailable) {
-        //   throw new Error(`Critical dependency missing for module "${name}". Halting its initialization.`);
+        // If critical dependencies are missing, you might choose to not initialize the module
+        // if (!allDepsMet && name !== 'ErrorLoggerModule') { // Example: allow error logger to init even if others fail
+        //   throw new Error(`Cannot initialize module "${name}" due to missing critical dependencies.`);
         // }
 
-        // console.debug(`[ModuleBootstrap] Initializing module: ${name} with deps:`, Object.keys(moduleDependencies));
-        const moduleInstanceOrApi = await initFn(moduleDependencies); // Call the module's init function
+        // Call the module's initialization function
+        // console.debug(`[ModuleBootstrap] Initializing "${name}" with dependencies:`, Object.keys(moduleDependencies));
+        const moduleAPIOrInstance = await initFn(moduleDependencies); // Await in case initFn is async
 
-        // If the module's initFn returns an instance/API and a 'provides' key is specified,
-        // make it available for subsequent modules.
+        // If the module's initFn returns an API/instance and `provides` key is set,
+        // add it to `availableServicesAndInstances` for subsequent modules.
         if (provides && typeof provides === 'string') {
-          if (moduleInstanceOrApi !== undefined) {
-            availableServicesAndInstances[provides] = moduleInstanceOrApi;
-            // console.info(`[ModuleBootstrap] Module "${name}" provided "${provides}".`);
+          if (moduleAPIOrInstance !== undefined) { // Allow null to be a valid "provided" value
+            availableServicesAndInstances[provides] = moduleAPIOrInstance;
+            // console.info(`[ModuleBootstrap] Module "${name}" initialized and provided: "${provides}"`);
           } else {
-            errorLogger.logWarning({
-              message: `Module "${name}" was configured to provide "${provides}" but its initFn returned undefined.`,
+            (errorLogger.logWarning || errorLogger.warn).call(errorLogger, {
+              message: `Module "${name}" was configured with 'provides: "${provides}"' but its initFn returned undefined.`,
               origin: 'moduleBootstrap.initializeAllModules',
-              context: { moduleName: name, providesKey: provides }
+              context: { module: name }
             });
           }
+        } else if (moduleAPIOrInstance !== undefined) {
+          // console.info(`[ModuleBootstrap] Module "${name}" initialized (initFn returned a value but no 'provides' key).`);
+        } else {
+          // console.info(`[ModuleBootstrap] Module "${name}" initialized (initFn did not return a value).`);
         }
-        // console.info(`[ModuleBootstrap] Module "${name}" initialized successfully.`);
 
       } catch (error) {
-        errorLogger.handleError({
-          error,
-          message: `Failed to initialize module: "${name}". Subsequent dependent modules might also fail or be affected.`,
-          origin: 'moduleBootstrap.initializeAllModules -> ' + name,
-          severity: 'error',
+        (errorLogger.handleError || errorLogger.error).call(errorLogger, {
+          error: error instanceof Error ? error : new Error(String(error)),
+          message: `CRITICAL: Failed to initialize module "${name}". This may affect application stability or functionality of dependent modules.`,
+          origin: `moduleBootstrap.init(${name})`,
+          severity: 'error', // Elevate severity for module init failures
           context: { moduleName: name }
         });
-        // Depending on the criticality, you might want to re-throw the error
-        // to halt the entire application bootstrapping process.
-        // For now, it logs the error and continues with other modules.
-        // throw error; // Uncomment to make module initialization failure fatal to app load
+        // Option: Re-throw to halt all bootstrapping if a critical module fails
+        // throw error; 
       }
     }
     // console.info('[ModuleBootstrap] All configured modules have been processed.');
   }
 };
-
-/**
- * @typedef {Object} ModuleConfig
- * @property {string} name - Descriptive name of the module.
- * @property {Function} initFn - The initialization function (async or sync) that takes a dependencies object.
- * @property {string[]} [dependencies] - Array of dependency names (keys in coreServices or from other modules' 'provides').
- * @property {string} [provides] - If the initFn returns a service/API, this is the key it will be registered under for other modules.
- */
 
 export default moduleBootstrap;
