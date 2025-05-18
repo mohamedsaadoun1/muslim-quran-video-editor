@@ -7,26 +7,26 @@
   --primary-color-lighter: #4db6ac;
   --secondary-color: #ffab40; /* Amber accent - for spinner, highlights */
 
-  /* New Design - Primarily Dark Theme Values */
-  --bg-color-dark: #0D0D0D; /* Very dark background for the app */
-  --surface-color-dark: #1A1A1A; /* Slightly lighter for surfaces like top bar, control area */
-  --surface-color-card: rgba(30, 30, 30, 0.85); /* Card background */
-  --text-color-dark: #E0E0E0; /* Main text color */
-  --text-color-secondary-dark: #9E9E9E; /* Secondary text, placeholders */
+  /* New Design - Primarily Dark Theme Values (these act as defaults) */
+  --bg-color-dark: #0D0D0D;
+  --surface-color-dark: #1A1A1A;
+  --surface-color-card: rgba(30, 30, 30, 0.85); /* Card background with some transparency for effect if bg is image */
+  --text-color-dark: #E0E0E0;
+  --text-color-secondary-dark: #9E9E9E;
   --highlight-bg-color-dark: rgba(0, 121, 107, 0.25); /* Teal highlight */
-  --separator-color-dark: #37474F; /* Separator lines */
-  --input-bg-color-dark: #2C2C2C; /* Input backgrounds */
-  --input-border-color-dark: #4A4A4A; /* Input borders */
+  --separator-color-dark: #37474F;
+  --input-bg-color-dark: #2C2C2C;
+  --input-border-color-dark: #4A4A4A;
   --button-primary-text-color-dark: white;
 
-  /* Light Theme Vars (Kept for theme toggle functionality) */
+  /* Light Theme Values */
   --bg-color-light: #eef2f5;
   --surface-color-light: #ffffff;
-  --text-color-light: #263238;
+  --text-color-light: #263238; /* Darker text for light backgrounds */
   --text-color-secondary-light: #546e7a;
   --highlight-bg-color-light: rgba(0, 121, 107, 0.08);
   --separator-color-light: #cfd8dc;
-  --input-bg-color-light: #f8fafc;
+  --input-bg-color-light: #f8fafc; /* Almost white */
   --input-border-color-light: #b0bec5;
   --button-primary-text-color-light: white;
 
@@ -34,16 +34,18 @@
   /* General UI Vars */
   --font-family-quran: 'Amiri Quran', 'Noto Naskh Arabic', serif;
   --font-family-ui: 'Tajawal', sans-serif;
-  --shadow-soft: 0 1px 3px rgba(0,0,0,0.12);
-  --shadow-medium: 0 3px 8px rgba(0,0,0,0.18);
-  --shadow-strong: 0 6px 20px rgba(0,0,0,0.25);
+  --shadow-soft: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+  --shadow-medium: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
+  --shadow-strong: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
   --border-radius-small: 4px;
   --border-radius-medium: 8px;
-  --border-radius-large: 16px; /* More rounded for cards */
+  --border-radius-large: 16px;
 
-  /* Default to Dark Theme values for current variables */
+  /* Current theme variables - default to dark theme values initially */
+  /* JavaScript will toggle a class on <body> to switch these using the .light-theme selector below */
   --current-bg-color: var(--bg-color-dark);
   --current-surface-color: var(--surface-color-dark);
+  --current-surface-card-color: var(--surface-color-card);
   --current-text-color: var(--text-color-dark);
   --current-text-secondary-color: var(--text-color-secondary-dark);
   --current-highlight-bg-color: var(--highlight-bg-color-dark);
@@ -54,9 +56,10 @@
 }
 
 /* Apply Light Theme when .light-theme is on body */
-body.light-theme { /* Added body selector for specificity */
+body.light-theme {
   --current-bg-color: var(--bg-color-light);
   --current-surface-color: var(--surface-color-light);
+  --current-surface-card-color: var(--surface-color-light); /* Cards are solid white on light theme */
   --current-text-color: var(--text-color-light);
   --current-text-secondary-color: var(--text-color-secondary-light);
   --current-highlight-bg-color: var(--highlight-bg-color-light);
@@ -91,12 +94,22 @@ body.light-theme h1, body.light-theme h2, body.light-theme h3, body.light-theme 
 
 h1 { font-size: 1.6rem; margin-bottom: 1rem; }
 h2 { font-size: 1.3rem; margin-bottom: 0.75rem; }
-h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+h3 { font-size: 1.1rem; margin-bottom: 0.5rem; } /* This covers panel titles & project card titles */
 p { margin-bottom: 1rem; color: var(--current-text-secondary-color); }
 a { color: var(--primary-color-lighter); text-decoration: none; }
 a:hover { text-decoration: underline; color: var(--secondary-color); }
 body.light-theme a { color: var(--primary-color); }
 body.light-theme a:hover { color: var(--primary-color-darker); }
+
+.arabic-text { /* For Ayah text etc. */
+  font-family: var(--font-family-quran);
+  direction: rtl;
+  text-align: center;
+}
+.translation-text-overlay {
+    font-family: var(--font-family-ui);
+}
+
 
 /* --- Buttons --- */
 button, input[type="button"], input[type="submit"] {
@@ -111,63 +124,66 @@ button:disabled, input:disabled { opacity: 0.5 !important; cursor: not-allowed !
 
 .button-primary-action {
   background-color: var(--primary-color); color: var(--current-button-primary-text-color);
-  box-shadow: var(--shadow-soft); display: inline-flex; align-items: center; gap: 0.5em;
+  box-shadow: var(--shadow-soft); display: inline-flex; align-items: center; justify-content: center; gap: 0.5em;
   padding: 0.75em 1.5em; font-size: 1rem; border-radius: var(--border-radius-large);
 }
 .button-primary-action:hover { background-color: var(--primary-color-darker); box-shadow: var(--shadow-medium); }
-.button-primary-action i { margin-right: 0.3em; } /* Original was left, for RTL, right might be better */
+.button-primary-action i { margin-right: 0.3em; } /* For RTL */
 body.light-theme .button-primary-action { background-color: var(--primary-color); color: white;}
 body.light-theme .button-primary-action:hover { background-color: var(--primary-color-darker); }
 
-
-.icon-button, .theme-button {
-  background: transparent; color: var(--current-text-color); border-radius: 50%;
-  padding: 0.5em; font-size: 1.1rem; line-height: 1; width: 40px; height: 40px;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.icon-button:hover, .theme-button:hover { background-color: rgba(255,255,255,0.1); }
-body.light-theme .icon-button:hover, body.light-theme .theme-button:hover { background-color: var(--current-highlight-bg-color); }
-
-.button-secondary { /* General secondary button style */
-    background-color: var(--current-input-border-color);
+.button-secondary {
+    background-color: var(--current-input-border-color); /* Using a slightly distinct color for secondary */
     color: var(--current-text-color);
+    border: 1px solid var(--current-separator-color);
 }
 .button-secondary:hover {
     background-color: var(--current-separator-color);
 }
 body.light-theme .button-secondary {
-    background-color: var(--current-input-border-color);
+    background-color: var(--separator-color-light);
+    color: var(--text-color-light);
+    border: 1px solid var(--input-border-color-light);
 }
 body.light-theme .button-secondary:hover {
-    background-color: var(--current-separator-color);
+    background-color: #e0e0e0;
 }
 
 
+.icon-button, .theme-button { /* Theme button inherits icon-button styles */
+  background: transparent; color: var(--current-text-color); border-radius: 50%;
+  padding: 0; /* Removed padding as width/height define size now */
+  font-size: 1.1rem; line-height: 1; width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.icon-button:hover, .theme-button:hover { background-color: rgba(255,255,255,0.1); }
+body.light-theme .icon-button:hover, body.light-theme .theme-button:hover { background-color: var(--current-highlight-bg-color); }
+
+/* Specific editor top bar button colors */
 .editor-top-bar .icon-button, .editor-top-bar .theme-button { color: var(--current-text-secondary-color); }
 .editor-top-bar .icon-button:hover, .editor-top-bar .theme-button:hover { color: var(--current-text-color); background-color: rgba(255,255,255,0.08); }
 body.light-theme .editor-top-bar .icon-button, body.light-theme .editor-top-bar .theme-button { color: var(--text-color-secondary-light); }
 body.light-theme .editor-top-bar .icon-button:hover, body.light-theme .editor-top-bar .theme-button:hover { color: var(--text-color-light); background-color: rgba(0,0,0,0.05); }
 
 
-.action-button.editor-save-btn { /* This style was specific, kept it */
+.action-button.editor-save-btn { /* Specific for Save button in editor top bar */
     background-color: var(--primary-color);
-    color: white;
-    border-radius: 20px; /* More specific than var(--border-radius-large) */
+    color: var(--current-button-primary-text-color);
+    border-radius: 20px;
     padding: 6px 18px;
     font-size: 0.9rem;
     box-shadow: var(--shadow-soft);
-    border:none;
+    border: none; /* Already in base button but ensure */
 }
 .action-button.editor-save-btn:hover {
     background-color: var(--primary-color-darker);
     box-shadow: var(--shadow-medium);
 }
 .action-button.editor-save-btn i { margin-right: 0.3em; }
-body.light-theme .action-button.editor-save-btn { background-color: var(--primary-color); color: white;}
-body.light-theme .action-button.editor-save-btn:hover { background-color: var(--primary-color-darker); }
 
 
 /* --- Forms & Inputs (Panel Inputs) --- */
+/* ... (Input styles from previous version were good, keeping them for brevity unless specific changes needed) ... */
 label { display: block; margin-bottom: 0.4em; font-size: 0.9rem; font-weight: 500; color: var(--current-text-secondary-color); }
 input[type="text"], input[type="number"], input[type="file"], select {
   width: 100%; padding: 0.6em 0.8em; border: 1px solid var(--current-input-border-color);
@@ -177,15 +193,12 @@ input[type="text"], input[type="number"], input[type="file"], select {
 }
 input[type="text"]:focus, input[type="number"]:focus, select:focus {
   outline: none; border-color: var(--primary-color-lighter);
-  box-shadow: 0 0 0 2px var(--highlight-bg-color-dark);
-}
-body.light-theme input[type="text"]:focus, body.light-theme input[type="number"]:focus, body.light-theme select:focus {
-  border-color: var(--primary-color); box-shadow: 0 0 0 2px var(--highlight-bg-color-light);
+  box-shadow: 0 0 0 2px var(--current-highlight-bg-color); /* Use current theme highlight */
 }
 input[type="color"] {
   min-height: 38px; padding: 0.3em; border-radius: var(--border-radius-small);
   border: 1px solid var(--current-input-border-color); cursor: pointer; width: 100%;
-  background-color: var(--current-input-bg-color); /* Ensure bg color for picker */
+  background-color: var(--current-input-bg-color);
 }
 input[type="range"] {
   width: 100%; height: 8px; -webkit-appearance: none; appearance: none;
@@ -194,385 +207,181 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 18px; height: 18px;
   background: var(--primary-color-lighter); border-radius: 50%; cursor: pointer;
-  border: 3px solid var(--current-input-bg-color);
-  box-shadow: var(--shadow-soft); margin-top: -5px; /* (height_of_thumb - height_of_track) / 2 with border correction */
+  border: 3px solid var(--current-input-bg-color); box-shadow: var(--shadow-soft); margin-top: -5px;
 }
-body.light-theme input[type="range"]::-webkit-slider-thumb {
-   background: var(--primary-color); border: 3px solid var(--current-input-bg-color);
-}
-input[type="range"]::-moz-range-thumb { /* Firefox */
+body.light-theme input[type="range"]::-webkit-slider-thumb { background: var(--primary-color); border-color: var(--current-input-bg-color); }
+input[type="range"]::-moz-range-thumb {
   width: 18px; height: 18px; background: var(--primary-color-lighter); border-radius: 50%;
   cursor: pointer; border: 3px solid var(--current-input-bg-color); box-shadow: var(--shadow-soft);
 }
-body.light-theme input[type="range"]::-moz-range-thumb { background: var(--primary-color); border: 3px solid var(--current-input-bg-color); }
+body.light-theme input[type="range"]::-moz-range-thumb { background: var(--primary-color); border-color: var(--current-input-bg-color); }
 
 
 /* --- Initial Screen Specific Styles --- */
-.app-header { /* For #initial-screen */
-  background-color: var(--primary-color); color: white; padding: 10px 15px; display: flex;
-  justify-content: space-between; align-items: center; box-shadow: var(--shadow-medium);
-  height: 56px; flex-shrink: 0;
-}
+/* ... (Styles from your provided CSS, mostly unchanged but using theme vars) ... */
+.app-header { background-color: var(--primary-color); color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow-medium); height: 56px; flex-shrink: 0; }
 .app-header h1 { margin: 0; font-size: 1.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-grow: 1; color: white; }
-
 #initial-screen main { flex-grow: 1; padding: 20px; overflow-y: auto; background-color: var(--current-bg-color); }
 .projects-section h2 { color: var(--current-text-color); border-bottom: 2px solid var(--current-text-secondary-color); padding-bottom: 8px; margin-bottom: 15px; font-size: 1.4rem; }
 body.light-theme .projects-section h2 { color: var(--primary-color); border-bottom-color: var(--primary-color); }
-
 #projects-list-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 15px; }
 #no-projects-message { text-align: center; padding: 20px; color: var(--current-text-secondary-color); grid-column: 1 / -1; }
-.project-card {
-    background-color: var(--current-surface-color); color: var(--current-text-color);
-    border-radius: var(--border-radius-medium); padding: 15px; box-shadow: var(--shadow-soft);
-    cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-    display: flex; flex-direction: column; border: 1px solid var(--current-separator-color);
-}
+.project-card { background-color: var(--current-surface-color); color: var(--current-text-color); border-radius: var(--border-radius-medium); padding: 15px; box-shadow: var(--shadow-soft); cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; display: flex; flex-direction: column; border: 1px solid var(--current-separator-color); }
 .project-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-medium); border-color: var(--primary-color-lighter); }
 body.light-theme .project-card:hover { border-color: var(--primary-color); }
 .project-card h3 { color: var(--primary-color-lighter); font-size: 1.1rem; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top:0; }
 body.light-theme .project-card h3 { color: var(--primary-color); }
 .project-card .project-meta { font-size: 0.8rem; color: var(--current-text-secondary-color); margin-bottom: 10px; flex-grow: 1; }
 .project-card .project-meta span { display: block; margin-bottom: 3px; }
-.project-actions { margin-top: auto; display: flex; gap: 8px; justify-content: flex-end; } /* Should be flex-start for RTL if actions are on the right */
-.project-actions button { background: none; border: none; color: var(--primary-color-lighter); cursor: pointer; font-size: 0.85rem; padding: 5px 8px; border-radius: var(--border-radius-small); }
+.project-actions { margin-top: auto; display: flex; gap: 8px; justify-content: flex-end; /* RTL default */ }
+.project-actions button { background: none; border: none; color: var(--primary-color-lighter); cursor: pointer; font-size: 0.85rem; padding: 5px 8px; border-radius: var(--border-radius-small); display: inline-flex; align-items: center; gap: 4px;}
 body.light-theme .project-actions button { color: var(--primary-color); }
 .project-actions button:hover { background-color: var(--current-highlight-bg-color); }
 .project-actions button.delete-project-btn:hover { color: #e53935; background-color: rgba(229, 57, 53, 0.15); }
-
 .initial-footer { padding: 15px; text-align: center; margin-top: auto; background-color: var(--current-surface-color); border-top: 1px solid var(--current-separator-color); flex-shrink: 0; }
 .copyright { font-size: 0.8rem; color: var(--current-text-secondary-color); margin-top: 15px; }
 
 
-/* --- Editor Screen Redesign --- */
-/* Removed #editor-screen { background-color: var(--bg-color-dark); } as body will handle bg color */
+/* --- Editor Screen Redesign (uses current-theme-vars) --- */
+/* ... (editor-top-bar styles from previous version, ensuring use of current-theme-vars) ... */
+.editor-top-bar { background-color: var(--current-surface-color); color: var(--current-text-color); padding: 0 10px; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); height: 50px; flex-shrink: 0; border-bottom: 1px solid var(--current-separator-color); }
+.editor-top-bar .project-title-editable { margin: 0 10px; font-size: 1rem; font-weight: 500; color: var(--current-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 5px 8px; border-radius: var(--border-radius-small); transition: background-color 0.2s; flex-grow: 1; text-align: right; /* RTL default */ }
+.editor-top-bar .project-title-editable:hover, .editor-top-bar .project-title-editable:focus { background-color: var(--current-highlight-bg-color); outline: none; }
+.editor-top-bar .project-title-editable[contenteditable="true"] { background-color: var(--current-input-bg-color); border: 1px solid var(--current-input-border-color); cursor: text; }
+.editor-top-actions { display: flex; align-items: center; gap: 8px; margin-right: auto; /* RTL: push to left */ }
 
-.editor-top-bar {
-  background-color: var(--current-surface-color); /* Use current-surface-color for theme compatibility */
-  color: var(--current-text-color);
-  padding: 0 10px; display: flex; align-items: center; gap: 8px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2); height: 50px; flex-shrink: 0;
-  border-bottom: 1px solid var(--current-separator-color);
-}
-.editor-top-bar .project-title-editable {
-  margin: 0 10px; font-size: 1rem; font-weight: 500; color: var(--current-text-color);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding: 5px 8px; border-radius: var(--border-radius-small);
-  transition: background-color 0.2s; flex-grow: 1; text-align: left; /* Text align left in RTL means right side visually */
-}
-.editor-top-bar .project-title-editable:hover, .editor-top-bar .project-title-editable:focus { background-color: rgba(255,255,255,0.05); outline: none; }
-.editor-top-bar .project-title-editable[contenteditable="true"] { background-color: rgba(255,255,255,0.1); cursor: text; }
-body.light-theme .editor-top-bar .project-title-editable:hover, body.light-theme .editor-top-bar .project-title-editable:focus { background-color: rgba(0,0,0,0.05); }
-body.light-theme .editor-top-bar .project-title-editable[contenteditable="true"] { background-color: rgba(0,0,0,0.1); }
-.editor-top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; } /* margin-right: auto in RTL for pushing to left */
-
-
-#editor-main-area-new {
-  flex-grow: 1; position: relative; display: flex; flex-direction: column; /* Changed to column for stacking preview and controls*/
-  justify-content: center; align-items: center; overflow: hidden;
-  /* background-color will be from body */
-  padding: 10px;
-}
-
-#video-preview-background-blur {
-  position: absolute; top: -20px; left: -20px; right: -20px; bottom: -20px;
-  background-size: cover; background-position: center;
-  background-color: var(--bg-color-dark); /* Default dark if no image - this one stays for blur layer */
-  filter: blur(15px) brightness(0.6);
-  z-index: 1;
-  transition: background-image 0.3s ease-in-out;
-}
-body.light-theme #video-preview-background-blur { background-color: #DDD; filter: blur(15px) brightness(0.9); }
-
-#video-preview-card-container {
-  position: relative; z-index: 2;
-  width: 90%; max-width: 380px; /* Or set fixed based on design */
-  /* aspect-ratio: 9 / 16;  aspect-ratio on video-preview-container instead */
-  background-color: var(--surface-color-card);
-  backdrop-filter: blur(8px) saturate(120%);
-  border-radius: var(--border-radius-large);
-  box-shadow: var(--shadow-strong);
-  padding: 10px; display: flex; flex-direction: column;
-  justify-content: center; align-items: center;
-  overflow: hidden;
-  margin-bottom: auto; /* Pushes controls to the bottom if #editor-main-area-new is flex column */
-  flex-grow: 1; max-height: 70vh; /* Control its growth */
-}
-body.light-theme #video-preview-card-container { background-color: rgba(250, 250, 250, 0.85); }
-
-
-#video-preview-container {
-  width: 100%;
-  aspect-ratio: 16 / 9; /* Default, JS overrides this based on user selection */
-  background-color: #000;
-  border-radius: var(--border-radius-medium);
-  position: relative; overflow: hidden;
-  transition: aspect-ratio 0.3s ease, filter 0.3s ease;
-}
-#video-preview-canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
-
-#preview-overlay-content {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  display: flex; flex-direction: column; justify-content: center; align-items: center;
-  padding: clamp(8px, 2.5vw, 15px); text-align: center;
-}
-#preview-surah-title-overlay {
-  font-size: clamp(1em, 3vw, 1.8em); margin-bottom: 0.4em;
-  text-shadow: 1px 1px 3px rgba(0,0,0,0.7);
-  color: var(--current-text-color); font-weight: 700;
-}
-#preview-ayah-text-overlay {
-  font-family: var(--font-family-quran);
-  font-size: clamp(1.3em, 4.5vw, 2.5em); line-height: 1.6;
-  color: var(--current-text-color); text-shadow: 1px 1px 4px rgba(0,0,0,0.8);
-  padding: 0.15em 0.3em; max-height: 55%; overflow-y: auto;
-  background-color: rgba(0,0,0,0.2); /* This might be better as a variable */
-  border-radius: var(--border-radius-small); width: 95%;
-  box-sizing: border-box;
-  transition: font-family 0.3s ease, font-size 0.3s ease, color 0.3s ease, background-color 0.3s ease;
-}
-#preview-translation-text-overlay {
-  font-family: var(--font-family-ui);
-  font-size: clamp(0.65em, 2vw, 0.9em);
-  color: var(--current-text-secondary-color); text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
-  margin-top: 0.4em; padding: 0.1em 0.2em; max-height: 22%; overflow-y: auto;
-  width: 90%; box-sizing: border-box; font-weight: 500;
-}
-body.light-theme #preview-ayah-text-overlay { background-color: rgba(255,255,255,0.2); text-shadow: 1px 1px 2px rgba(150,150,150,0.5);}
-body.light-theme #preview-translation-text-overlay { text-shadow: 1px 1px 1px rgba(180,180,180,0.5);}
-
-
-/* Scrollbars for overlays */
+/* Editor Main Area - #video-preview-* structure styling from previous version can be used here */
+#editor-main-area-new { flex-grow: 1; position: relative; display: flex; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; padding: 10px; background-color: var(--current-bg-color); /* The main editor BG */}
+#video-preview-background-blur { position: absolute; top: -20px; left: -20px; right: -20px; bottom: -20px; background-size: cover; background-position: center; filter: blur(15px) brightness(0.6); z-index: 1; transition: background-image 0.3s ease-in-out; background-color: var(--bg-color-dark); /* Dark underlay */}
+body.light-theme #video-preview-background-blur { filter: blur(15px) brightness(0.9); background-color: var(--bg-color-light); /* Lighter underlay for light theme */ }
+#video-preview-card-container { position: relative; z-index: 2; width: 90%; max-width: 380px; background-color: var(--current-surface-card-color); backdrop-filter: blur(8px) saturate(120%); border-radius: var(--border-radius-large); box-shadow: var(--shadow-strong); padding: 10px; display: flex; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; margin-bottom: auto; flex-grow: 1; max-height: 70vh; }
+#video-preview-container { width: 100%; /* aspect-ratio handled by JS or direct style */ background-color: #000; border-radius: var(--border-radius-medium); position: relative; overflow: hidden; transition: aspect-ratio 0.3s ease, filter 0.3s ease; }
+#video-preview-canvas { display: block; width: 100%; height: 100%; object-fit: contain; filter: var(--current-canvas-filter, none); /* CSS filter on canvas */ }
+/* Text Overlays - styling for these from previous stylesheet mostly okay, using current-theme-vars */
+#preview-overlay-content { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: clamp(8px, 2.5vw, 15px); text-align: center; }
+#preview-surah-title-overlay { font-size: clamp(1em, 3vw, 1.8em); margin-bottom: 0.4em; text-shadow: 1px 1px 3px rgba(0,0,0,0.7); color: var(--current-text-color); font-weight: 700; }
+#preview-ayah-text-overlay { /* Uses .arabic-text */ font-size: clamp(1.3em, 4.5vw, 2.5em); line-height: 1.6; color: var(--current-text-color); text-shadow: 1px 1px 4px rgba(0,0,0,0.8); padding: 0.15em 0.3em; max-height: 55%; overflow-y: auto; background-color: rgba(0,0,0,0.2); border-radius: var(--border-radius-small); width: 95%; box-sizing: border-box; transition: font-family 0.3s ease, font-size 0.3s ease, color 0.3s ease, background-color 0.3s ease; }
+#preview-translation-text-overlay { /* Uses .translation-text-overlay */ font-size: clamp(0.65em, 2vw, 0.9em); color: var(--current-text-secondary-color); text-shadow: 1px 1px 2px rgba(0,0,0,0.6); margin-top: 0.4em; padding: 0.1em 0.2em; max-height: 22%; overflow-y: auto; width: 90%; box-sizing: border-box; font-weight: 500; }
+body.light-theme #preview-surah-title-overlay, body.light-theme #preview-ayah-text-overlay { text-shadow: 1px 1px 2px rgba(100,100,100,0.4); } /* Lighter shadow for light theme */
+body.light-theme #preview-ayah-text-overlay { background-color: rgba(255,255,255,0.3); }
+body.light-theme #preview-translation-text-overlay { text-shadow: 1px 1px 1px rgba(150,150,150,0.4); }
+/* Overlay scrollbars (webkit only example) */
 #preview-ayah-text-overlay::-webkit-scrollbar, #preview-translation-text-overlay::-webkit-scrollbar { width: 5px; }
-#preview-ayah-text-overlay::-webkit-scrollbar-track, #preview-translation-text-overlay::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 3px; }
-#preview-ayah-text-overlay::-webkit-scrollbar-thumb, #preview-translation-text-overlay::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
-#preview-ayah-text-overlay::-webkit-scrollbar-thumb:hover, #preview-translation-text-overlay::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+#preview-ayah-text-overlay::-webkit-scrollbar-track, #preview-translation-text-overlay::-webkit-scrollbar-track { background: rgba(var(--current-text-color-rgb, 224,224,224),0.05); border-radius: 3px; }
+#preview-ayah-text-overlay::-webkit-scrollbar-thumb, #preview-translation-text-overlay::-webkit-scrollbar-thumb { background: rgba(var(--current-text-color-rgb, 224,224,224),0.2); border-radius: 3px; }
+#preview-ayah-text-overlay::-webkit-scrollbar-thumb:hover, #preview-translation-text-overlay::-webkit-scrollbar-thumb:hover { background: rgba(var(--current-text-color-rgb, 224,224,224),0.3); }
 
 
-#editor-controls-area { /* This is now a footer inside #editor-screen */
-  flex-shrink: 0; background-color: var(--current-surface-color);
-  padding: 10px 0 5px 0; box-shadow: 0 -3px 10px rgba(0,0,0,0.3);
-  z-index: 100; border-top: 1px solid var(--current-separator-color);
-  position: relative; /* For panel positioning and to ensure it's above panels */
-  width:100%;
-}
-
-#playback-timeline-section {
-  max-width: 100%; padding: 0 15px; margin-bottom: 12px;
-}
+/* Editor Controls Area (Footer within editor screen) */
+#editor-controls-area { flex-shrink: 0; background-color: var(--current-surface-color); padding: 8px 0 5px 0; /* Adjusted padding */ box-shadow: 0 -3px 10px rgba(0,0,0,0.3); z-index: 100; border-top: 1px solid var(--current-separator-color); width:100%; position: relative; /* For panels */}
+#playback-timeline-section { max-width: 100%; padding: 0 15px; margin-bottom: 10px; }
 #timeline-container { display: flex; align-items: center; width: 100%; gap: 10px; color: var(--current-text-secondary-color); }
-#timeline-container input[type="range"]#timeline-slider {
-  flex-grow: 1; height: 6px; background: var(--current-input-border-color); /* Adjusted */
-}
-#timeline-container input[type="range"]#timeline-slider::-webkit-slider-thumb {
-  width: 16px; height: 16px; background: var(--primary-color-lighter);
-  border: 2px solid var(--current-surface-color); margin-top: -5px; /* Adjusted from surface-dark */
-}
-body.light-theme #timeline-container input[type="range"]#timeline-slider::-webkit-slider-thumb {
-  background: var(--primary-color); border-color: var(--current-surface-color);
-}
+#timeline-container input[type="range"]#timeline-slider { flex-grow: 1; height: 6px; background: var(--current-input-border-color); } /* Matched range input style */
+#timeline-container input[type="range"]#timeline-slider::-webkit-slider-thumb { width: 16px; height: 16px; background: var(--primary-color-lighter); border: 2px solid var(--current-surface-color); margin-top: -5px; box-shadow: var(--shadow-soft); }
+body.light-theme #timeline-container input[type="range"]#timeline-slider::-webkit-slider-thumb { background: var(--primary-color); border-color: var(--current-surface-color); }
 #current-time-display, #total-time-display { font-size: 0.75rem; min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
-
-#main-playback-controls {
-  display: flex; justify-content: center; align-items: center;
-  gap: 12px; margin-bottom: 12px;
-}
-/* Reusing .icon-button class for playback buttons for consistency */
-#main-playback-controls .playback-icon-button { /* Base styling for all playback buttons, specific sizing below */
-    color: var(--current-text-secondary-color);
-}
-#main-playback-controls .playback-icon-button:hover {
-    background-color: rgba(255,255,255,0.08);
-    color: var(--current-text-color);
-}
-body.light-theme #main-playback-controls .playback-icon-button { color: var(--text-color-secondary-light); }
-body.light-theme #main-playback-controls .playback-icon-button:hover { background-color: rgba(0,0,0,0.08); color: var(--text-color-light); }
-
-#main-playback-controls .playback-icon-button.large { width: 52px; height: 52px; font-size: 1.4rem; }
-#main-playback-controls .playback-icon-button.extra-large { /* Play/Pause button */
-  width: 64px; height: 64px; font-size: 1.8rem;
-  background-color: var(--primary-color); color: white;
-}
+#main-playback-controls { display: flex; justify-content: center; align-items: center; gap: 12px; margin-bottom: 10px; }
+/* Playback buttons already styled with .icon-button and specific size classes .large, .extra-large */
+#main-playback-controls .playback-icon-button { /* Base styling for all playback buttons if .icon-button is not enough */ color: var(--current-text-secondary-color); }
+#main-playback-controls .playback-icon-button:hover { background-color: var(--current-highlight-bg-color); color: var(--current-text-color); }
+#main-playback-controls .playback-icon-button.large { width: 48px; height: 48px; font-size: 1.3rem; }
+#main-playback-controls .playback-icon-button.extra-large { width: 60px; height: 60px; font-size: 1.7rem; background-color: var(--primary-color); color: var(--current-button-primary-text-color); }
 #main-playback-controls .playback-icon-button.extra-large:hover { background-color: var(--primary-color-darker); }
-body.light-theme #main-playback-controls .playback-icon-button.extra-large { background-color: var(--primary-color); color: white;}
 
 
-#main-bottom-tab-bar {
-  display: flex; justify-content: space-around; /* Use space-around for better distribution */
-  overflow-x: auto; overflow-y: hidden;
-  white-space: nowrap; padding: 8px 10px; height: auto; gap: 10px;
-  background-color: transparent;
-}
-#main-bottom-tab-bar::-webkit-scrollbar { display: none; }
-#main-bottom-tab-bar { -ms-overflow-style: none; scrollbar-width: none; }
-
-#main-bottom-tab-bar .main-tab-button { /* Inherits from button, then specialized */
-  flex-direction: column; align-items: center; justify-content: center;
-  min-width: 65px; padding: 6px 5px;
-  border-radius: var(--border-radius-medium);
-  background-color: rgba(255,255,255,0.05);
-  color: var(--current-text-secondary-color);
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-  flex: 1 1 auto; /* Allow flexible sizing */
-  border: 1px solid transparent;
-  font-size: 0.9rem; /* Reset from base button if needed */
-}
-#main-bottom-tab-bar .main-tab-button i { font-size: 1.5em; margin-bottom: 3px; }
-#main-bottom-tab-bar .main-tab-button span { font-size: 0.65rem; display: block; white-space: normal; text-align: center; line-height: 1.1;}
-#main-bottom-tab-bar .main-tab-button.active {
-  background-color: var(--primary-color); color: white;
-  border-color: var(--primary-color-darker); /* Optional active border */
-}
-#main-bottom-tab-bar .main-tab-button:hover:not(.active) {
-    background-color: rgba(255,255,255,0.1); color: var(--current-text-color);
-}
-body.light-theme #main-bottom-tab-bar .main-tab-button {
-    background-color: rgba(0,0,0,0.03); color: var(--text-color-secondary-light);
-}
-body.light-theme #main-bottom-tab-bar .main-tab-button.active {
-    background-color: var(--primary-color); color: white;
-}
-body.light-theme #main-bottom-tab-bar .main-tab-button:hover:not(.active) {
-    background-color: rgba(0,0,0,0.06); color: var(--text-color-light);
-}
+/* Main Bottom Tab Bar for Panels */
+#main-bottom-tab-bar { display: flex; justify-content: space-around; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: 6px 8px; /* Reduced padding */ gap: 8px; /* Reduced gap */ background-color: transparent; }
+#main-bottom-tab-bar::-webkit-scrollbar { display: none; } #main-bottom-tab-bar { -ms-overflow-style: none; scrollbar-width: none; }
+#main-bottom-tab-bar .main-tab-button { flex-direction: column; align-items: center; justify-content: center; min-width: 60px; /* Slightly smaller */ padding: 5px 3px; border-radius: var(--border-radius-medium); background-color: rgba(var(--current-text-color-rgb, 224,224,224),0.05); color: var(--current-text-secondary-color); transition: background-color 0.2s ease, color 0.2s ease; flex: 1 1 auto; border: 1px solid transparent; font-size:0.85rem;}
+#main-bottom-tab-bar .main-tab-button i { font-size: 1.4em; margin-bottom: 2px; }
+#main-bottom-tab-bar .main-tab-button span { font-size: 0.6rem; display: block; white-space: normal; text-align: center; line-height: 1.1; }
+#main-bottom-tab-bar .main-tab-button.active { background-color: var(--primary-color); color: white; border-color: var(--primary-color-darker); }
+#main-bottom-tab-bar .main-tab-button:hover:not(.active) { background-color: rgba(var(--current-text-color-rgb, 224,224,224),0.1); color: var(--current-text-color); }
+body.light-theme #main-bottom-tab-bar .main-tab-button { background-color: rgba(0,0,0,0.03); }
+body.light-theme #main-bottom-tab-bar .main-tab-button:hover:not(.active) { background-color: rgba(0,0,0,0.06); }
 
 
-#active-control-panels-container {
-  position: absolute;
-  /* This is positioned relative to #editor-screen or a wrapper that excludes editor-controls-area */
-  /* If #editor-controls-area is a footer, this needs to be above it or overlay it based on layout */
-  /* Assuming it should be placed just above #editor-controls-area or as an overlay that respects its height */
-  bottom: 0; /* Panels now start from the bottom of editor screen, behind editor-controls-area */
-  left: 0; right: 0;
-  height: auto; /* Max height will be set per panel */
-  z-index: 150; /* Higher than editor-controls-area if they overlap, or same if stacked */
-  overflow: hidden; display: flex; /* Not needed for single panel view */
-  pointer-events: none; /* Allow clicks through to content below if no panel is active */
-}
+/* Active Control Panels Container and Individual Panels */
+#active-control-panels-container { position: absolute; bottom: 0; /* Will be covered by footer/controls-area */ left: 0; right: 0; height: auto; z-index: 150; pointer-events: none; }
+.control-panel { background-color: var(--current-surface-color); border-top: 1px solid var(--current-separator-color); box-shadow: 0 -4px 12px rgba(0,0,0,0.25); width: 100%; max-height: 50vh; /* Or calc carefully */ height: auto; overflow-y: auto; display: none; flex-direction: column; position: absolute; bottom: 0; /* Start from bottom of parent */ left:0; right:0; padding-bottom: calc(var(--footer-controls-height, 160px) + 15px); /* Padding to not be hidden by controls footer - JS should set --footer-controls-height */ pointer-events: auto; transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease-out; transform: translateY(100%); opacity: 0; z-index: 200; /* Above controls area when visible */ }
+/* JS will need to calculate and set --footer-controls-height based on #editor-controls-area actual height */
+.control-panel.visible { display: flex; transform: translateY(0); opacity: 1; padding-bottom: 15px; /* Override when visible */ }
 
-.control-panel {
-  background-color: var(--current-surface-color);
-  border-top: 1px solid var(--current-separator-color);
-  box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
-  width: 100%;
-  /* Max height ensures it doesn't cover the entire screen */
-  /* Height will be from bottom of screen up to editor-top-bar or some other limit */
-  max-height: calc(100vh - 50px - 60px); /* Screen_height - top_bar_height - some_bottom_buffer_or_preview_height */
-  /* Height calculation: 100vh (full viewport) - editor-top-bar (50px) - minimum_preview_area_height (e.g. 200px) - editor-controls-area (variable, ~160px). This is tricky. */
-  /* A simpler approach might be to set max-height: 50vh; or a fixed px value like 300px or 400px. */
-  height: auto; /* Content drives height up to max-height */
-  overflow-y: auto;
-  display: none; /* JS toggles to 'flex' or 'block' */
-  flex-direction: column;
-  position: absolute; /* Positions relative to #active-control-panels-container or #editor-screen */
-  bottom: 0; /* Stick to bottom of its container */
-  left:0; right:0;
-  padding-bottom: 15px; /* For scrollbar */
-  pointer-events: auto; /* Enabled for active panel */
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease-out;
-  transform: translateY(100%); /* Start off-screen */
-  opacity: 0;
-  z-index: 200; /* Should be above the footer controls area */
-}
-.control-panel.visible { display: flex; transform: translateY(0); opacity: 1; }
-
-.panel-header {
-  padding: 8px 12px; border-bottom: 1px solid var(--current-separator-color);
-  background-color: var(--current-surface-color); position: sticky; top: 0; z-index: 10;
-  display: flex; justify-content: space-between; align-items: center;
-}
+/* Panel Header, Content (styles from previous, using current-theme-vars) */
+.panel-header { padding: 8px 12px; border-bottom: 1px solid var(--current-separator-color); background-color: var(--current-surface-color); position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; }
 .panel-header h3 { margin: 0; font-size: 1rem; font-weight: 700; }
-.panel-action-button { /* These are typically close buttons, use .icon-button base style */
-    color: var(--current-text-secondary-color); font-size: 1rem; padding: 6px; width: 30px; height: 30px;
-}
-.panel-action-button:hover { background-color: rgba(255,255,255,0.1); color: var(--current-text-color); }
-.panel-action-button.confirm-panel-btn { color: var(--primary-color-lighter); } /* If confirm buttons are needed */
-.panel-action-button.confirm-panel-btn:hover { color: var(--primary-color); }
-body.light-theme .panel-action-button.confirm-panel-btn { color: var(--primary-color); }
-body.light-theme .panel-action-button.confirm-panel-btn:hover { color: var(--primary-color-darker); }
-
-
+.panel-action-button.close-panel-btn { /* Using .icon-button base style for close */ color: var(--current-text-secondary-color); }
+.panel-action-button.close-panel-btn:hover { color: var(--current-text-color); background-color:var(--current-highlight-bg-color); }
 .panel-content { padding: 12px; display: grid; grid-template-columns: 1fr; gap: 15px 18px; }
 @media (min-width: 500px) { .panel-content { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); } }
 .panel-content > div { display: flex; flex-direction: column; gap: 5px; }
-.panel-content h4 { /* Sub-headings within panels */
-    grid-column: 1 / -1; margin-top: 8px; margin-bottom: -8px; padding-bottom: 5px;
-    border-bottom: 1px solid var(--current-separator-color);
-    font-size: 0.9rem; font-weight: 700; color: var(--primary-color-lighter);
-}
+.panel-content h4 { grid-column: 1 / -1; margin-top: 8px; margin-bottom: 0px; /* Reduced margin */ padding-bottom: 5px; border-bottom: 1px solid var(--current-separator-color); font-size: 0.9rem; font-weight: 700; color: var(--primary-color-lighter); }
 body.light-theme .panel-content h4 { color: var(--primary-color); }
 .panel-content hr.panel-divider { grid-column: 1 / -1; border: none; border-top: 1px solid var(--current-separator-color); margin: 10px 0; }
 
 
-/* Spinner */
-.spinner-overlay { /* Renamed from #loading-spinner for generic use */
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); z-index: 10000;
-  display: none; /* JS will toggle this */
-  align-items: center; justify-content: center; backdrop-filter: blur(4px);
-}
-.spinner-overlay.visible { display: flex; }
-.spinner {
-  border: 5px solid rgba(255,255,255,0.2); border-top: 5px solid var(--secondary-color);
-  border-radius: 50%; width: 45px; height: 45px; animation: spin 0.8s linear infinite;
-}
+/* --- Spinner (from previous, should be okay) --- */
+.spinner-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.65); z-index: 10000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); opacity: 0; transition: opacity 0.2s ease-out;}
+.spinner-overlay.visible { display: flex; opacity: 1;}
+.spinner { border: 5px solid rgba(255,255,255,0.2); border-top: 5px solid var(--secondary-color); border-radius: 50%; width: 50px; height: 50px; animation: spin 0.8s linear infinite; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-/* Export Progress in Panel */
-#export-progress-bar-container { grid-column: 1 / -1; margin-top: 10px; text-align: center; }
-#export-progress-bar-container progress { width: 100%; height: 10px; border-radius: 5px; overflow: hidden; }
-#export-progress-bar-container progress::-webkit-progress-bar { background-color: var(--current-input-border-color); }
-#export-progress-bar-container progress::-webkit-progress-value { background-color: var(--primary-color); transition: width 0.2s ease; }
-#export-progress-bar-container progress::-moz-progress-bar { background-color: var(--primary-color); }
+/* Export Progress (styles from previous version mostly okay) */
+#export-progress-bar-container { grid-column: 1 / -1; margin-top: 10px; text-align: center; display: none; /* JS toggles */ }
+#export-progress-bar-container progress { width: 100%; height: 10px; border-radius: 5px; overflow: hidden; appearance: none; -webkit-appearance: none;}
+#export-progress-bar-container progress::-webkit-progress-bar { background-color: var(--current-input-border-color); border-radius: 5px; }
+#export-progress-bar-container progress::-webkit-progress-value { background-color: var(--primary-color); transition: width 0.2s ease; border-radius: 5px;}
+#export-progress-bar-container progress::-moz-progress-bar { background-color: var(--primary-color); border-radius: 5px;}
 #export-progress-bar-container span { display: block; margin-top: 5px; font-size: 0.8rem; color: var(--current-text-secondary-color); }
 
 
-/* Responsive adjustments */
+/* --- Modal Styles (New, needs to be added from modal.factory.js if provided) --- */
+/* ... (Insert modal CSS here from previous response for modal.factory.js) ... */
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: opacity 0.25s ease-out, visibility 0s linear 0.25s;}
+body.modal-open .modal-overlay { opacity: 1; visibility: visible; transition: opacity 0.25s ease-out;}
+body.modal-open { overflow: hidden; }
+.modal-wrapper { background-color: var(--current-surface-color); padding: 20px 25px; border-radius: var(--border-radius-medium); box-shadow: var(--shadow-strong); min-width: 300px; max-width: 90%; width: auto; max-height: 80vh; overflow-y: auto; transform: scale(0.95); opacity: 0; transition: transform 0.25s ease-out, opacity 0.25s ease-out;}
+body.modal-open .modal-wrapper { transform: scale(1); opacity: 1;}
+.modal-title { font-size: 1.4rem; color: var(--current-text-color); margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid var(--current-separator-color); padding-bottom: 10px; }
+body.light-theme .modal-title { color: var(--primary-color); border-bottom-color: var(--separator-color-light); }
+.modal-message { font-size: 1rem; color: var(--current-text-secondary-color); line-height: 1.6; margin-bottom: 20px; white-space: pre-line; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.modal-actions.single-action { justify-content: center; }
+.modal-button { padding: 0.5em 1em; font-size: 0.9rem; }
+.modal-button.cancel-button { background-color: var(--current-input-bg-color); color: var(--current-text-color); border: 1px solid var(--current-input-border-color); }
+.modal-button.cancel-button:hover { background-color: var(--current-separator-color); }
+body.light-theme .modal-button.cancel-button { background-color: var(--input-bg-color-light); color: var(--text-color-light); border: 1px solid var(--input-border-color-light); }
+body.light-theme .modal-button.cancel-button:hover { background-color: #e0e0e0; }
+
+
+
+/* --- Responsive adjustments from previous stylesheet (slightly condensed) --- */
 @media (max-width: 768px) {
   #video-preview-card-container { width: 85%; max-width: 360px; padding: 8px; max-height: 65vh;}
-  #preview-ayah-text-overlay { font-size: clamp(1.2em, 4vw, 2.2em); }
-  #preview-translation-text-overlay { font-size: clamp(0.6em, 1.8vw, 0.85em); }
-  .control-panel { max-height: calc(100vh - 50px - 50px); /* screen - top_bar - min_visible_controls_footer */ }
   #main-playback-controls .playback-icon-button.extra-large { width: 60px; height: 60px; font-size: 1.7rem;}
-  #main-playback-controls .playback-icon-button.large { width: 48px; height: 48px; font-size: 1.3rem;}
-  #main-playback-controls .playback-icon-button { width: 40px; height: 40px; font-size: 1rem;} /* Default for undo/redo */
+  #main-playback-controls .playback-icon-button.large { width: 44px; height: 44px; font-size: 1.2rem;} /* For next/prev */
+  #main-playback-controls .playback-icon-button { width: 38px; height: 38px; font-size: 1rem;} /* For undo/redo */
 }
 
 @media (max-width: 480px) {
   html { font-size: 15px; }
-  .editor-top-bar { height: 48px; }
+  .editor-top-bar { height: 48px; padding: 0 8px; }
   .editor-top-bar .project-title-editable { font-size: 0.9rem; margin: 0 5px; }
-  .action-button.editor-save-btn { padding: 5px 15px; font-size: 0.85rem; }
-  #video-preview-card-container { width: 92%; max-width: 320px; border-radius:var(--border-radius-medium); padding:6px; max-height: 60vh; }
-  #preview-surah-title-overlay { font-size: clamp(0.9em, 2.5vw, 1.5em); }
-  #preview-ayah-text-overlay { font-size: clamp(1.1em, 4vw, 2em); }
-  #preview-translation-text-overlay { font-size: clamp(0.55em, 1.5vw, 0.75em); }
-
-  #editor-controls-area { padding: 8px 0 3px 0; }
-  #playback-timeline-section { margin-bottom: 10px; padding: 0 10px; }
-  #current-time-display, #total-time-display { font-size: 0.7rem; }
-  #main-playback-controls { gap: 8px; margin-bottom: 10px; }
-  #main-playback-controls .playback-icon-button.extra-large { width: 56px; height: 56px; font-size: 1.6rem;}
-  #main-playback-controls .playback-icon-button.large { width: 44px; height: 44px; font-size: 1.2rem;}
-  #main-playback-controls .playback-icon-button { width: 36px; height: 36px; font-size: 0.9rem;}
-
-  #main-bottom-tab-bar { padding: 6px 8px; gap: 6px; /* Reduced gap */ }
-  #main-bottom-tab-bar .main-tab-button { min-width: 55px; padding: 5px 3px; /* Reduced padding */ }
-  #main-bottom-tab-bar .main-tab-button i { font-size: 1.3em; /* Slightly smaller icon */ }
-  #main-bottom-tab-bar .main-tab-button span { font-size: 0.55rem; /* Smaller text */ }
-
-  .control-panel { max-height: calc(100vh - 48px - 45px); } /* screen - top_bar - min_visible_controls_footer_small_screen */
-  .panel-header { padding: 6px 10px; }
-  .panel-header h3 { font-size: 0.95rem; }
-  .panel-content { padding: 10px; gap: 12px; }
-}
-
-/* Arabic text specific styling for Quran verses (can be enhanced) */
-.arabic-text {
-  font-family: var(--font-family-quran);
-  direction: rtl;
-  text-align: center; /* Or right, depending on design preference */
-}
-.translation-text-overlay { /* If translations are not RTL by default */
-    font-family: var(--font-family-ui);
-    /* direction: ltr; /* Uncomment if translation is LTR like English */
-    /* text-align: left; /* Uncomment if translation is LTR */
+  .action-button.editor-save-btn { padding: 5px 12px; font-size: 0.8rem; }
+  .icon-button, .theme-button { width: 36px; height: 36px; font-size: 1rem; }
+  #video-preview-card-container { width: 95%; padding:6px; max-height: 60vh; } /* Wider on small screens */
+  #editor-controls-area { padding: 6px 0 3px 0; }
+  #playback-timeline-section { margin-bottom: 8px; padding: 0 10px; }
+  #main-playback-controls { gap: 6px; margin-bottom: 8px; }
+  #main-playback-controls .playback-icon-button.extra-large { width: 52px; height: 52px; font-size: 1.5rem;}
+  #main-playback-controls .playback-icon-button.large { width: 40px; height: 40px; font-size: 1.1rem;}
+  #main-playback-controls .playback-icon-button { width: 32px; height: 32px; font-size: 0.85rem;}
+  #main-bottom-tab-bar { padding: 5px; gap: 5px; }
+  #main-bottom-tab-bar .main-tab-button { min-width: 50px; padding: 4px 2px; }
+  #main-bottom-tab-bar .main-tab-button i { font-size: 1.2em; }
+  #main-bottom-tab-bar .main-tab-button span { font-size: 0.5rem; }
+  .control-panel { max-height: calc(100vh - 48px - 50px); /* Adjust based on editor-controls-area height on small screens */ }
+  .panel-header { padding: 6px 10px; } .panel-header h3 { font-size: 0.9rem; }
+  .panel-content { padding: 10px; gap: 10px 15px; }
+  .modal-wrapper { min-width: 280px; padding: 15px 20px;}
 }
