@@ -1,0 +1,7 @@
+{
+  "name": "muslim-quran-video-editor",
+  "version": "1.0.0",
+  "scripts": {
+    "ci": "npm ci"
+  }
+}
