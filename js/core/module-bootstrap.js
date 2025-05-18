@@ -1,134 +1,115 @@
 // js/core/module-bootstrap.js
 
-import errorLogger from './error-logger.js';
-// Shared UI Components initializers
-import { initializeThemeController } from '../shared-ui-components/theme.controller.js'; // ستقوم بإنشائها
-import { initializePanelManager } from '../shared-ui-components/panel.manager.js'; // ستقوم بإنشائها
-import { initializeNotificationPresenter } from '../shared-ui-components/notification.presenter.js'; // ستقوم بإنشائها
-import { initializeSpinnerView } from '../shared-ui-components/spinner.view.js'; // ستقوم بإنشائها
-// ... import other shared UI component initializers
-
-// Feature Modules initializers
-import { initializeProjectManager } from '../features/project-manager/project.actions.js'; // أو ملف index.js في المجلد
-import { initializeQuranProvider } from '../features/quran-provider/quran.data.cache.js'; // نقطة بداية لمزود القرآن
-import { initializeQuranSelectorUI } from '../features/quran-provider/quran-selector.ui.js'; // UI الخاص باختيار القرآن
-// ... import initializers for BackgroundController, TextEngine, AudioEngine, CanvasComposer, VideoExporter, EditorShell etc.
-import { initializeScreenNavigator } from '../features/editor-shell/screen.navigator.js'; // ستقوم بإنشائها
-import { initializeMainToolbarHandler } from '../features/editor-shell/main-toolbar.handler.js';
-import { initializePlaybackControlStrip } from '../features/editor-shell/playback-control-strip.ui.js';
-import { initializeProjectTitleEditor } from '../features/editor-shell/project-title.editor.js';
-
-
-// قائمة بالوحدات التي يجب تهيئتها والاعتماديات التي قد تحتاجها
-// الترتيب مهم هنا أحيانًا، خاصة إذا كانت وحدة تعتمد على تهيئة وحدة أخرى.
-// يمكن تحسين هذا باستخدام نظام أكثر تطورًا لإدارة الاعتماديات إذا لزم الأمر.
-
-const modulesToInitialize = [
-  // Shared UI Components (عادةً ما تكون قليلة الاعتماديات المباشرة على الميزات الأخرى)
-  { name: 'ThemeController', initFn: initializeThemeController, dependencies: ['stateStore', 'eventAggregator', 'errorLogger'] },
-  { name: 'NotificationPresenter', initFn: initializeNotificationPresenter, dependencies: ['eventAggregator', 'errorLogger'] },
-  { name: 'SpinnerView', initFn: initializeSpinnerView, dependencies: ['stateStore', 'errorLogger'] },
-  { name: 'PanelManager', initFn: initializePanelManager, dependencies: ['eventAggregator', 'errorLogger'] }, // Panels are part of editor-shell
-  
-  // Core Feature Logic & Data Providers (قد تُهيأ قبل الـ UI الذي يعتمد عليها)
-  { name: 'ProjectManager', initFn: initializeProjectManager, dependencies: ['stateStore', 'eventAggregator', 'errorLogger', 'localStorageAdapter'] }, // ستحتاج لإنشاء local-storage.adapter.js
-  { name: 'QuranDataProvider', initFn: initializeQuranProvider, dependencies: ['stateStore', 'eventAggregator', 'errorLogger', 'quranApiClient'] }, // ستحتاج quran.api.client.js
-
-  // Feature UI modules (التي تتفاعل مباشرة مع المستخدم)
-  // -- Editor Shell (Framework of the editor)
-  { name: 'ScreenNavigator', initFn: initializeScreenNavigator, dependencies: ['stateStore', 'eventAggregator', 'errorLogger'] },
-  { name: 'MainToolbarHandler', initFn: initializeMainToolbarHandler, dependencies: ['stateStore', 'eventAggregator', 'errorLogger'] },
-  { name: 'PlaybackControlStrip', initFn: initializePlaybackControlStrip, dependencies: ['eventAggregator', 'errorLogger', 'stateStore'] },
-  { name: 'ProjectTitleEditor', initFn: initializeProjectTitleEditor, dependencies: ['stateStore', 'eventAggregator', 'errorLogger']},
-
-
-  // -- Specific Feature UI (these often depend on data providers or shell components)
-  { name: 'QuranSelectorUI', initFn: initializeQuranSelectorUI, dependencies: ['stateStore', 'eventAggregator', 'errorLogger', 'quranDataProvider'] }, // quranDataProvider هو اسم مرجعي
-  // { name: 'BackgroundImporterUI', initFn: initializeBackgroundImporterUI, dependencies: ['stateStore', 'eventAggregator', 'errorLogger', 'fileIOUtils'] },
-  // { name: 'AIBackgroundConnector', initFn: initializeAIBackgroundConnector, dependencies: ['stateStore', 'eventAggregator', 'errorLogger', 'pexelsApiClient'] },
-  // { name: 'TextStyleUI', initFn: initializeTextStyleUI, dependencies: ['stateStore', 'eventAggregator', 'errorLogger'] },
-  // { name: 'AudioSettingsManagerUI', initFn: initializeAudioSettingsManagerUI, dependencies: ['stateStore', 'eventAggregator', 'errorLogger'] },
-  // { name: 'CanvasMainRenderer', initFn: initializeCanvasMainRenderer, dependencies: ['stateStore', 'eventAggregator', 'errorLogger'] },
-  // { name: 'VideoExporterUI', initFn: initializeVideoExporterUI, dependencies: ['stateStore', 'eventAggregator', 'errorLogger', 'ccaptureRecorder'] },
-
-  // Add more modules here as they are developed
-  // Example:
-  // { name: 'MyFeatureModule', initFn: initializeMyFeature, dependencies: ['stateStore', 'someApiService'] },
-];
-
+// Note: The actual initializer functions (e.g., initializeThemeController, initializeProjectManager)
+// will be imported in main.js and passed as part of the moduleConfigs array.
+// This module itself does not need to import them directly, making it more generic.
 
 const moduleBootstrap = {
   /**
-   * Initializes all registered modules.
-   * @param {Object} coreServices - An object containing core services like stateStore, eventAggregator, etc.
+   * Initializes all registered modules based on the provided configurations.
+   * @param {Object} coreServices - An object containing core, app-wide services.
+   * @param {import('./state-store.js').default} coreServices.stateStore - The central state store.
+   * @param {import('./event-aggregator.js').default} coreServices.eventAggregator - The event aggregator.
+   * @param {import('./error-logger.js').default} coreServices.errorLogger - The error logging service.
+   * @param {import('./resource-manager.js').default} [coreServices.resourceManager] - Optional, resource manager.
+   * @param {import('./localization.service.js').default} [coreServices.localizationService] - Optional, localization service.
+   * // Add other core services as they are developed and needed by modules.
+   *
+   * @param {Array<ModuleConfig>} moduleConfigs - An array of module configurations.
+   * Each configuration object should have:
+   *   - {string} name: A descriptive name for the module (for logging).
+   *   - {Function} initFn: The initialization function for the module. This function will receive an object of its dependencies.
+   *   - {Array<string>} [dependencies]: An optional array of strings listing the names of services/instances this module depends on.
+   *                                      These names must match keys in `coreServices` or `provides` from previously initialized modules.
+   *   - {string} [provides]: Optional. If this module's initFn returns an instance/API that other modules might need,
+   *                           this string is the key under which it will be made available to subsequent modules.
    */
-  async initializeAllModules(coreServices) {
-    // console.info('[ModuleBootstrap] Starting module initialization...');
+  async initializeAllModules(coreServices, moduleConfigs = []) {
+    const { errorLogger = console } = coreServices; // Fallback errorLogger if not provided
 
-    // Pass all core services plus references to other already initialized services if needed dynamically
-    // For now, we assume direct dependency names are listed.
-    // A more advanced system could resolve dependencies more dynamically.
-    const availableServices = { ...coreServices };
+    // console.info('[ModuleBootstrap] Starting module initialization process...');
 
+    const availableServicesAndInstances = { ...coreServices };
 
-    for (const moduleConfig of modulesToInitialize) {
-      if (typeof moduleConfig.initFn !== 'function') {
+    for (const moduleConfig of moduleConfigs) {
+      if (!moduleConfig || typeof moduleConfig.name !== 'string' || typeof moduleConfig.initFn !== 'function') {
         errorLogger.logWarning({
-          message: `Initialization function for module "${moduleConfig.name}" is not a function. Skipping.`,
+          message: `Invalid module configuration object. Skipping.`,
           origin: 'moduleBootstrap.initializeAllModules',
+          context: { config: moduleConfig }
         });
         continue;
       }
 
+      const { name, initFn, dependencies = [], provides } = moduleConfig;
+
       try {
         // Prepare dependencies for the current module
         const moduleDependencies = {};
-        if (moduleConfig.dependencies && Array.isArray(moduleConfig.dependencies)) {
-          moduleConfig.dependencies.forEach(depName => {
-            if (availableServices[depName]) {
-              moduleDependencies[depName] = availableServices[depName];
-            } else if (depName === 'quranDataProvider' && availableServices['QuranDataProvider_instance']) { // Special case if we store instance
-                moduleDependencies[depName] = availableServices['QuranDataProvider_instance'];
-            }
-            // else {
-            //   // This could be a warning if a listed dependency isn't a core one, assuming it's provided by another module
-            //   // errorLogger.logWarning({
-            //   //   message: `Dependency "${depName}" not found in availableServices for module "${moduleConfig.name}".`,
-            //   //   origin: 'moduleBootstrap.initializeAllModules',
-            //   // });
-            // }
-          });
-        }
-        
-        // console.debug(`[ModuleBootstrap] Initializing module: ${moduleConfig.name}`);
-        const moduleInstance = await moduleConfig.initFn(moduleDependencies);
-        // console.info(`[ModuleBootstrap] Module "${moduleConfig.name}" initialized.`);
+        let allDepsAvailable = true;
 
-        // If the initFn returns something (e.g., an instance or API of the module),
-        // we can store it to be a dependency for subsequent modules.
-        // This requires careful ordering or a more sophisticated DI system.
-        if (moduleInstance) {
-             // Use a convention, e.g. if initFn is for 'QuranDataProvider', store instance as 'QuranDataProvider_instance'
-             // Or simply store it by its name if it's meant to be an injectable service itself.
-             if(moduleConfig.name === 'QuranDataProvider'){ // Example
-                availableServices[`${moduleConfig.name}_instance`] = moduleInstance;
-             }
+        for (const depName of dependencies) {
+          if (Object.prototype.hasOwnProperty.call(availableServicesAndInstances, depName)) {
+            moduleDependencies[depName] = availableServicesAndInstances[depName];
+          } else {
+            errorLogger.logWarning({
+              message: `Dependency "${depName}" not found for module "${name}". Module might not function correctly.`,
+              origin: 'moduleBootstrap.initializeAllModules',
+              context: { moduleName: name, missingDependency: depName }
+            });
+            allDepsAvailable = false; // Or decide to throw/halt if a critical dependency is missing
+            // For now, we'll let it initialize with potentially missing dependencies and log a warning.
+          }
         }
+
+        // Optional: If you want to be stricter and halt if a dependency is missing, uncomment below.
+        // if (!allDepsAvailable) {
+        //   throw new Error(`Critical dependency missing for module "${name}". Halting its initialization.`);
+        // }
+
+        // console.debug(`[ModuleBootstrap] Initializing module: ${name} with deps:`, Object.keys(moduleDependencies));
+        const moduleInstanceOrApi = await initFn(moduleDependencies); // Call the module's init function
+
+        // If the module's initFn returns an instance/API and a 'provides' key is specified,
+        // make it available for subsequent modules.
+        if (provides && typeof provides === 'string') {
+          if (moduleInstanceOrApi !== undefined) {
+            availableServicesAndInstances[provides] = moduleInstanceOrApi;
+            // console.info(`[ModuleBootstrap] Module "${name}" provided "${provides}".`);
+          } else {
+            errorLogger.logWarning({
+              message: `Module "${name}" was configured to provide "${provides}" but its initFn returned undefined.`,
+              origin: 'moduleBootstrap.initializeAllModules',
+              context: { moduleName: name, providesKey: provides }
+            });
+          }
+        }
+        // console.info(`[ModuleBootstrap] Module "${name}" initialized successfully.`);
 
       } catch (error) {
         errorLogger.handleError({
           error,
-          message: `Failed to initialize module: "${moduleConfig.name}".`,
-          origin: 'moduleBootstrap.initializeAllModules',
-          severity: 'error', // Make this an error because module init failure can be critical
+          message: `Failed to initialize module: "${name}". Subsequent dependent modules might also fail or be affected.`,
+          origin: 'moduleBootstrap.initializeAllModules -> ' + name,
+          severity: 'error',
+          context: { moduleName: name }
         });
-        // Depending on the module, you might want to re-throw to stop app init,
-        // or just log and continue if it's a non-critical module.
-        // For now, we'll log and continue.
+        // Depending on the criticality, you might want to re-throw the error
+        // to halt the entire application bootstrapping process.
+        // For now, it logs the error and continues with other modules.
+        // throw error; // Uncomment to make module initialization failure fatal to app load
       }
     }
-    // console.info('[ModuleBootstrap] All registered modules processed.');
+    // console.info('[ModuleBootstrap] All configured modules have been processed.');
   }
 };
+
+/**
+ * @typedef {Object} ModuleConfig
+ * @property {string} name - Descriptive name of the module.
+ * @property {Function} initFn - The initialization function (async or sync) that takes a dependencies object.
+ * @property {string[]} [dependencies] - Array of dependency names (keys in coreServices or from other modules' 'provides').
+ * @property {string} [provides] - If the initFn returns a service/API, this is the key it will be registered under for other modules.
+ */
 
 export default moduleBootstrap;
