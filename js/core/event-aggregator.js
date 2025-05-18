@@ -11,12 +11,33 @@ const eventAggregator = (() => {
    */
   const subscribe = (eventName, callback) => {
     if (typeof eventName !== 'string' || eventName.trim() === '') {
-      console.error('[EventAggregator] Invalid eventName for subscribe:', eventName);
-      return { unsubscribe: () => {} };
+      // Attempt to use errorLogger if available, otherwise fallback to console.error
+      const logger = (typeof window !== 'undefined' && window.errorLogger) ||
+                     (typeof errorLogger !== 'undefined' ? errorLogger : null);
+      if (logger && typeof logger.logWarning === 'function') {
+        logger.logWarning({
+          message: `Invalid eventName for subscribe: "${eventName}". Subscription failed.`,
+          origin: 'EventAggregator.subscribe'
+        });
+      } else {
+        console.warn('[EventAggregator] Invalid eventName for subscribe:', eventName);
+      }
+      return { unsubscribe: () => {} }; // Return a no-op unsubscribe
     }
+
     if (typeof callback !== 'function') {
-      console.error('[EventAggregator] Invalid callback for subscribe on event:', eventName);
-      return { unsubscribe: () => {} };
+      const logger = (typeof window !== 'undefined' && window.errorLogger) ||
+                     (typeof errorLogger !== 'undefined' ? errorLogger : null);
+      if (logger && typeof logger.logWarning === 'function') {
+        logger.logWarning({
+          message: `Invalid callback for subscribe on event: "${eventName}". Subscription failed.`,
+          origin: 'EventAggregator.subscribe',
+          context: { eventName }
+        });
+      } else {
+        console.warn('[EventAggregator] Invalid callback for subscribe on event:', eventName);
+      }
+      return { unsubscribe: () => {} }; // Return a no-op unsubscribe
     }
 
     if (!subscriptions[eventName]) {
@@ -28,7 +49,10 @@ const eventAggregator = (() => {
     return {
       unsubscribe: () => {
         if (subscriptions[eventName]) {
-          subscriptions[eventName] = subscriptions[eventName].filter(cb => cb !== callback);
+          const index = subscriptions[eventName].indexOf(callback);
+          if (index > -1) {
+            subscriptions[eventName].splice(index, 1);
+          }
           if (subscriptions[eventName].length === 0) {
             delete subscriptions[eventName];
           }
@@ -43,29 +67,40 @@ const eventAggregator = (() => {
    * @param {any} [data] - Optional data to pass to the event callbacks.
    */
   const publish = (eventName, data) => {
+    // errorLogger might not be defined globally yet during initial script parsing,
+    // so we make its usage conditional or fallback to console.
+    const logger = (typeof window !== 'undefined' && window.errorLogger) ||
+                   (typeof errorLogger !== 'undefined' ? errorLogger : null);
+
     if (typeof eventName !== 'string' || eventName.trim() === '') {
-      console.warn('[EventAggregator] Invalid eventName for publish:', eventName);
+      if (logger && typeof logger.logWarning === 'function') {
+        logger.logWarning({
+            message: `Invalid eventName for publish: "${eventName}". Event not published.`,
+            origin: 'EventAggregator.publish'
+        });
+      } else {
+        console.warn('[EventAggregator] Invalid eventName for publish:', eventName);
+      }
       return;
     }
 
+    // Optional: For debugging, log published events
     // console.debug(`[EventAggregator] Publishing event: ${eventName}`, data !== undefined ? data : '');
 
-    if (subscriptions[eventName]) {
-      // Iterate over a copy of the array in case a callback unsubscribes itself or another
-      [...subscriptions[eventName]].forEach(callback => {
+    if (subscriptions[eventName] && subscriptions[eventName].length > 0) {
+      // Iterate over a copy of the array in case a callback unsubscribes itself or another during iteration
+      const callbacksToExecute = [...subscriptions[eventName]];
+      
+      callbacksToExecute.forEach(callback => {
         try {
           callback(data);
         } catch (error) {
-          // Use the errorLogger if available, otherwise console.error
-          const message = `Error in subscriber for event "${eventName}"`;
-          // Check if errorLogger is available on window or directly if circular dependency allows
-          const logger = (typeof window !== 'undefined' && window.errorLogger) || 
-                         (typeof errorLogger !== 'undefined' ? errorLogger : null);
+          const message = `Error in subscriber callback for event "${eventName}"`;
           if (logger && typeof logger.handleError === 'function') {
              logger.handleError({
                 error,
                 message,
-                origin: `EventAggregator.publish(${eventName})->callback`,
+                origin: `EventAggregator.publish("${eventName}")->callback`,
                 severity: 'error',
                 context: { eventData: data }
              });
@@ -83,22 +118,39 @@ const eventAggregator = (() => {
    * @param {string} [eventName] - The specific event to clear subscriptions for.
    */
   const clearSubscriptions = (eventName) => {
-    if (eventName) {
+    if (eventName && typeof eventName === 'string') {
       if (subscriptions[eventName]) {
         delete subscriptions[eventName];
         // console.debug(`[EventAggregator] Cleared subscriptions for event: ${eventName}`);
       }
-    } else {
+    } else if (eventName === undefined) { // Clear all if no argument or undefined is passed
       Object.keys(subscriptions).forEach(key => delete subscriptions[key]);
       // console.debug('[EventAggregator] Cleared all subscriptions.');
+    } else {
+        const logger = (typeof window !== 'undefined' && window.errorLogger) ||
+                       (typeof errorLogger !== 'undefined' ? errorLogger : null);
+        if (logger && typeof logger.logWarning === 'function') {
+            logger.logWarning({
+                message: `Invalid argument for clearSubscriptions. Expected string or undefined, got: ${typeof eventName}`,
+                origin: 'EventAggregator.clearSubscriptions'
+            });
+        } else {
+            console.warn('[EventAggregator] Invalid argument for clearSubscriptions.');
+        }
     }
   };
 
   return {
     subscribe,
     publish,
-    clearSubscriptions, // Expose for testing or reset scenarios
+    clearSubscriptions,
   };
 })();
+
+// Expose to window for debugging if errorLogger isn't available initially (during development)
+// if (typeof window !== 'undefined' && !window.errorLogger && typeof errorLogger !== 'undefined') {
+//   window.errorLogger = errorLogger; // Temporary for initial access
+// }
+
 
 export default eventAggregator;
