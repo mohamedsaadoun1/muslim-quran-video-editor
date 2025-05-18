@@ -1,1 +1,29 @@
+name: Auto Fix
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps || yarn install
+      - name: Run ESLint --fix
+        run: npx eslint js/ --ext .js --fix || true
+      - name: Run Prettier --write
+        run: npx prettier --write "js/**/*.js"
+      - name: Commit changes
+        run: |
+          git config --global user.email "bot@example.com"
+          git config --global user.name "AutoFix Bot"
+          git add .
+          git commit -m "Auto fix by GitHub Action" || echo "No changes"
+          git push
