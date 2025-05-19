@@ -79,7 +79,11 @@ return unsafeStr
   .replace(/</g, "<")
   .replace(/>/g, ">")
   .replace(/"/g, "")
-  .replace(/'/g, ""); // Alternatively use ' but ' is more widely supported
+  .replace(/'/g, "");
+}
+
+// هنا يبدأ توثيق الدالة الجديدة أو أي شرح آخر خارج الجسم
+/**
  * Unescapes HTML entities back to their characters.
  * @param {string} safeStr - The string with HTML entities.
  * @returns {string} The unescaped string.
