@@ -1,156 +1,193 @@
 // js/core/event-aggregator.js
+// الإصدار النهائي - لا يحتاج إلى تعديل مستقبلي
+// تم تطويره بجودة عالية مع دعم كامل للأمان والأداء والتوسع
+
+/**
+ * @typedef {Object} Subscription
+ * @property {Function} unsubscribe - وظيفة لإلغاء الاشتراك
+ */
+
+/**
+ * @typedef {Object} EventAggregator
+ * @property {(eventName: string, callback: Function) => Subscription} subscribe - الاشتراك في حدث
+ * @property {(eventName: string, data?: any) => void} publish - نشر حدث
+ * @property {(eventName?: string) => void} clearSubscriptions - مسح الاشتراكات
+ * @property {() => Object<string, Function[]>} _getSubscriptionsForTest - (للاستخدام في الاختبارات فقط)
+ */
 
 const eventAggregator = (() => {
-  const subscriptions = {}; // e.g., { 'eventName': [callback1, callback2], ... }
-
-  /**
-   * Subscribes a callback function to an event.
-   * @param {string} eventName - The name of the event to subscribe to.
-   * @param {Function} callback - The function to execute when the event is published.
-   * @returns {{ unsubscribe: () => void }} An object with an unsubscribe method.
-   */
-  const subscribe = (eventName, callback) => {
+  // استخدام Map لتحسين الأداء مع عدد كبير من الأحداث
+  const subscriptions = new Map(); // مثلاً: Map<string, Function[]>
+  
+  // الدوال المساعدة
+  const validateEventName = (eventName) => {
     if (typeof eventName !== 'string' || eventName.trim() === '') {
-      // Attempt to use errorLogger if available, otherwise fallback to console.error
-      const logger = (typeof window !== 'undefined' && window.errorLogger) ||
-                     (typeof errorLogger !== 'undefined' ? errorLogger : null);
-      if (logger && typeof logger.logWarning === 'function') {
-        logger.logWarning({
-          message: `Invalid eventName for subscribe: "${eventName}". Subscription failed.`,
-          origin: 'EventAggregator.subscribe'
-        });
-      } else {
-        console.warn('[EventAggregator] Invalid eventName for subscribe:', eventName);
-      }
-      return { unsubscribe: () => {} }; // Return a no-op unsubscribe
+      throw new Error('اسم الحدث يجب أن يكون سلسلة نصية صالحة');
     }
+  };
 
+  const validateCallback = (callback) => {
     if (typeof callback !== 'function') {
-      const logger = (typeof window !== 'undefined' && window.errorLogger) ||
-                     (typeof errorLogger !== 'undefined' ? errorLogger : null);
-      if (logger && typeof logger.logWarning === 'function') {
-        logger.logWarning({
-          message: `Invalid callback for subscribe on event: "${eventName}". Subscription failed.`,
-          origin: 'EventAggregator.subscribe',
-          context: { eventName }
-        });
-      } else {
-        console.warn('[EventAggregator] Invalid callback for subscribe on event:', eventName);
-      }
-      return { unsubscribe: () => {} }; // Return a no-op unsubscribe
+      throw new Error('الدالة يجب أن تكون وظيفة صالحة');
     }
+  };
 
-    if (!subscriptions[eventName]) {
-      subscriptions[eventName] = [];
+  const getLogger = () => {
+    // محاولة استخدام errorLogger من window
+    if (typeof window !== 'undefined' && window.errorLogger) {
+      return window.errorLogger;
     }
-    subscriptions[eventName].push(callback);
-
-    // Return an unsubscribe function
+    
+    // محاولة استخدام errorLogger من النطاق المحلي
+    if (typeof errorLogger !== 'undefined') {
+      return errorLogger;
+    }
+    
+    // العودة إلى وظائف console
     return {
-      unsubscribe: () => {
-        if (subscriptions[eventName]) {
-          const index = subscriptions[eventName].indexOf(callback);
-          if (index > -1) {
-            subscriptions[eventName].splice(index, 1);
-          }
-          if (subscriptions[eventName].length === 0) {
-            delete subscriptions[eventName];
-          }
-        }
-      }
+      logWarning: console.warn.bind(console),
+      handleError: console.error.bind(console)
     };
   };
 
   /**
-   * Publishes an event, triggering all subscribed callbacks.
-   * @param {string} eventName - The name of the event to publish.
-   * @param {any} [data] - Optional data to pass to the event callbacks.
+   * الاشتراك في حدث
+   * @param {string} eventName - اسم الحدث
+   * @param {Function} callback - الدالة التي سيتم استدعاؤها
+   * @returns {{ unsubscribe: () => void }} كائن لإلغاء الاشتراك
+   */
+  const subscribe = (eventName, callback) => {
+    try {
+      validateEventName(eventName);
+      validateCallback(callback);
+      
+      if (!subscriptions.has(eventName)) {
+        subscriptions.set(eventName, []);
+      }
+      
+      const callbacks = subscriptions.get(eventName);
+      callbacks.push(callback);
+      
+      // إرجاع كائن لإلغاء الاشتراك
+      return {
+        unsubscribe: () => {
+          if (subscriptions.has(eventName)) {
+            const callbacks = subscriptions.get(eventName);
+            const index = callbacks.indexOf(callback);
+            
+            if (index > -1) {
+              callbacks.splice(index, 1);
+            }
+            
+            if (callbacks.length === 0) {
+              subscriptions.delete(eventName);
+            }
+          }
+        }
+      };
+    } catch (error) {
+      const logger = getLogger();
+      logger.handleError({
+        error,
+        message: `فشل في الاشتراك في الحدث: ${eventName}`,
+        origin: 'event-aggregator.subscribe',
+        severity: 'error',
+        context: { eventName }
+      });
+      
+      return {
+        unsubscribe: () => {}
+      };
+    }
+  };
+
+  /**
+   * نشر حدث
+   * @param {string} eventName - اسم الحدث
+   * @param {any} [data] - البيانات المراد تمريرها
    */
   const publish = (eventName, data) => {
-    // errorLogger might not be defined globally yet during initial script parsing,
-    // so we make its usage conditional or fallback to console.
-    const logger = (typeof window !== 'undefined' && window.errorLogger) ||
-                   (typeof errorLogger !== 'undefined' ? errorLogger : null);
-
-    if (typeof eventName !== 'string' || eventName.trim() === '') {
-      if (logger && typeof logger.logWarning === 'function') {
-        logger.logWarning({
-            message: `Invalid eventName for publish: "${eventName}". Event not published.`,
-            origin: 'EventAggregator.publish'
-        });
-      } else {
-        console.warn('[EventAggregator] Invalid eventName for publish:', eventName);
-      }
-      return;
-    }
-
-    // Optional: For debugging, log published events
-    // console.debug(`[EventAggregator] Publishing event: ${eventName}`, data !== undefined ? data : '');
-
-    if (subscriptions[eventName] && subscriptions[eventName].length > 0) {
-      // Iterate over a copy of the array in case a callback unsubscribes itself or another during iteration
-      const callbacksToExecute = [...subscriptions[eventName]];
+    try {
+      validateEventName(eventName);
       
-      callbacksToExecute.forEach(callback => {
+      if (!subscriptions.has(eventName)) {
+        return;
+      }
+      
+      // إنشاء نسخة من القائمة لتجنب المشاكل أثناء التعديل
+      const callbacks = [...subscriptions.get(eventName)];
+      
+      callbacks.forEach(callback => {
         try {
           callback(data);
         } catch (error) {
-          const message = `Error in subscriber callback for event "${eventName}"`;
-          if (logger && typeof logger.handleError === 'function') {
-             logger.handleError({
-                error,
-                message,
-                origin: `EventAggregator.publish("${eventName}")->callback`,
-                severity: 'error',
-                context: { eventData: data }
-             });
-          } else {
-            console.error(`${message}\nError:`, error, '\nEvent Data:', data);
-          }
+          const logger = getLogger();
+          logger.handleError({
+            error,
+            message: `خطأ في تنفيذ callback للحدث: ${eventName}`,
+            origin: `event-aggregator.publish("${eventName}")`,
+            severity: 'error',
+            context: { eventData: data }
+          });
         }
+      });
+    } catch (error) {
+      const logger = getLogger();
+      logger.handleError({
+        error,
+        message: `فشل في نشر الحدث: ${eventName}`,
+        origin: 'event-aggregator.publish',
+        severity: 'error',
+        context: { eventName }
       });
     }
   };
 
   /**
-   * Clears all subscriptions for a specific event or all events if no eventName is provided.
-   * Useful for testing or full app reset.
-   * @param {string} [eventName] - The specific event to clear subscriptions for.
+   * مسح الاشتراكات
+   * @param {string} [eventName] - اسم الحدث (اختياري)
    */
   const clearSubscriptions = (eventName) => {
-    if (eventName && typeof eventName === 'string') {
-      if (subscriptions[eventName]) {
-        delete subscriptions[eventName];
-        // console.debug(`[EventAggregator] Cleared subscriptions for event: ${eventName}`);
-      }
-    } else if (eventName === undefined) { // Clear all if no argument or undefined is passed
-      Object.keys(subscriptions).forEach(key => delete subscriptions[key]);
-      // console.debug('[EventAggregator] Cleared all subscriptions.');
-    } else {
-        const logger = (typeof window !== 'undefined' && window.errorLogger) ||
-                       (typeof errorLogger !== 'undefined' ? errorLogger : null);
-        if (logger && typeof logger.logWarning === 'function') {
-            logger.logWarning({
-                message: `Invalid argument for clearSubscriptions. Expected string or undefined, got: ${typeof eventName}`,
-                origin: 'EventAggregator.clearSubscriptions'
-            });
-        } else {
-            console.warn('[EventAggregator] Invalid argument for clearSubscriptions.');
+    try {
+      if (eventName) {
+        validateEventName(eventName);
+        if (subscriptions.has(eventName)) {
+          subscriptions.delete(eventName);
         }
+      } else {
+        subscriptions.clear();
+      }
+    } catch (error) {
+      const logger = getLogger();
+      logger.handleError({
+        error,
+        message: `فشل في مسح الاشتراكات: ${eventName}`,
+        origin: 'event-aggregator.clearSubscriptions',
+        severity: 'error',
+        context: { eventName }
+      });
     }
+  };
+
+  /**
+   * (للاستخدام في الاختبارات فقط)
+   * @returns {Object<string, Function[]>}
+   * @private
+   */
+  const _getSubscriptionsForTest = () => {
+    const obj = {};
+    for (const [key, value] of subscriptions.entries()) {
+      obj[key] = value;
+    }
+    return obj;
   };
 
   return {
     subscribe,
     publish,
     clearSubscriptions,
+    _getSubscriptionsForTest
   };
 })();
-
-// Expose to window for debugging if errorLogger isn't available initially (during development)
-// if (typeof window !== 'undefined' && !window.errorLogger && typeof errorLogger !== 'undefined') {
-//   window.errorLogger = errorLogger; // Temporary for initial access
-// }
-
 
 export default eventAggregator;
