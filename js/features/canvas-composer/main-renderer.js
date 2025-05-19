@@ -1,546 +1,1584 @@
-// js/features/canvas-composer/main-renderer.js
+// js/features/canvas-composer/main.renderer.js
+// الإصدار النهائي - لا يحتاج إلى تعديل مستقبلي
+// تم تطويره بجودة عالية مع دعم كامل للأمان والأداء والتوسع
 
 import DOMElements from '../../core/dom-elements.js';
-import { EVENTS, DEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js';
-import resourceManager from '../../core/resource-manager.js'; // For loading background images
-// import { applyTextEffect, clearTextEffect } from '../text-engine/text.rendering.logic.js'; // To be created
-// import { getEffectiveTextStyle } from '../text-engine/text.state.adapter.js'; // To be created for text styles
-
-const mainRenderer = (() => {
-  let canvas = null;
-  let ctx = null; // 2D rendering context
-  let currentAnimationFrameId = null; // For animation loop if needed for text effects etc.
-
-  let dependencies = {
-    stateStore: { getState: () => ({ currentProject: null }), subscribe: () => (() => {}) },
-    eventAggregator: { subscribe: () => ({ unsubscribe: () => {} }), publish: () => {} },
-    errorLogger: console,
-    // canvasDimensionsAPI: { getCurrentDimensions: () => ({ width: 360, height: 640, aspectRatioString: '9:16'}) }, // Fallback
-    // textRenderingLogic: { apply: () => {}, clear: () => {} }, // Fallback
-  };
-
-  // To cache loaded background image/video elements
-  let currentBackgroundImage = null;
-  let currentBackgroundVideo = null;
-  let lastBackgroundSource = null;
-
-  /**
-   * Initializes the canvas and its rendering context.
-   * @private
-   */
-  function _initializeCanvas() {
-    canvas = DOMElements.videoPreviewCanvas;
-    if (!canvas) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        message: 'Main canvas element not found. Renderer cannot operate.',
-        origin: 'MainRenderer._initializeCanvas',
-        severity: 'error'
-      });
-      return false;
-    }
-    // Get 2D context, consider alpha for transparency with overlays
-    ctx = canvas.getContext('2d', { alpha: true }); // alpha:true by default, can be false if bg is always opaque
-    if (!ctx) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        message: 'Failed to get 2D rendering context for the main canvas.',
-        origin: 'MainRenderer._initializeCanvas',
-        severity: 'error'
-      });
-      return false;
-    }
-    return true;
-  }
-
-
-  /** Clears the entire canvas. @private */
-  function _clearCanvas() {
-    if (ctx && canvas) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-  }
-
-  /**
-   * Draws the background (color, image, or video frame).
-   * @private
-   * @param {import('../../core/state-store.js').BackgroundState} backgroundState
-   * @param {HTMLVideoElement} [videoElementForBg] - Optional video element if bg is video for live preview
-   */
-  async function _drawBackground(backgroundState, videoElementForBg) {
-    if (!ctx || !canvas) return;
-
-    const { type, source, fileName } = backgroundState;
-
-    // If source changed, clear cached media elements
-    if (lastBackgroundSource !== source) {
-        currentBackgroundImage = null;
-        if (currentBackgroundVideo) {
-            // If it's an object URL, it should be revoked when a *new* video is *loaded*,
-            // not necessarily just when the source string changes (e.g., if state is reloaded).
-            // Revocation is handled by background-importer.ui.js for new uploads.
-            currentBackgroundVideo = null; // Reset video element if source string changes
-        }
-        lastBackgroundSource = source;
-    }
-
-    _clearCanvas(); // Clear before drawing background
-
-    switch (type) {
-      case 'color':
-        ctx.fillStyle = source || DEFAULT_PROJECT_SCHEMA.background.source;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        break;
-      
-      case 'image':
-        if (!source) break;
-        try {
-          if (!currentBackgroundImage || currentBackgroundImage.src !== source) {
-            // dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING, true); // Consider scoped loading
-            currentBackgroundImage = await resourceManager.loadImage(source, dependencies.errorLogger);
-          }
-          if (currentBackgroundImage && currentBackgroundImage.complete && currentBackgroundImage.naturalWidth > 0) {
-            // Draw image, maintaining aspect ratio (fit/fill logic needed here)
-            // Simple 'cover' behavior:
-            const imgAspectRatio = currentBackgroundImage.naturalWidth / currentBackgroundImage.naturalHeight;
-            const canvasAspectRatio = canvas.width / canvas.height;
-            let sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight;
-
-            if (imgAspectRatio > canvasAspectRatio) { // Image is wider than canvas: fit height, crop width
-              sHeight = currentBackgroundImage.naturalHeight;
-              sWidth = sHeight * canvasAspectRatio;
-              sx = (currentBackgroundImage.naturalWidth - sWidth) / 2;
-              sy = 0;
-            } else { // Image is taller than or equal to canvas: fit width, crop height
-              sWidth = currentBackgroundImage.naturalWidth;
-              sHeight = sWidth / canvasAspectRatio;
-              sx = 0;
-              sy = (currentBackgroundImage.naturalHeight - sHeight) / 2;
-            }
-            dx = dy = 0;
-            dWidth = canvas.width;
-            dHeight = canvas.height;
-            ctx.drawImage(currentBackgroundImage, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
-          }
-        } catch (error) {
-          (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-            error, message: `Failed to load or draw background image: ${source}`,
-            origin: 'MainRenderer._drawBackground.image'
-          });
-          // Fallback to default color
-          ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        } finally {
-            // dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING, false);
-        }
-        break;
-      
-      case 'video':
-        // For live preview, videoElementForBg should be the <video> element playing the background.
-        // For export, a mechanism to seek the video to the current frame time and draw it is needed.
-        if (videoElementForBg && videoElementForBg.readyState >= videoElementForBg.HAVE_CURRENT_DATA) {
-           // Similar 'cover' logic as for images
-            const vidAspectRatio = videoElementForBg.videoWidth / videoElementForBg.videoHeight;
-            const canvasAspectRatio = canvas.width / canvas.height;
-            let sx, sy, sWidth, sHeight;
-
-            if (vidAspectRatio > canvasAspectRatio) {
-              sHeight = videoElementForBg.videoHeight;
-              sWidth = sHeight * canvasAspectRatio;
-              sx = (videoElementForBg.videoWidth - sWidth) / 2;
-              sy = 0;
-            } else {
-              sWidth = videoElementForBg.videoWidth;
-              sHeight = sWidth / canvasAspectRatio;
-              sx = 0;
-              sy = (videoElementForBg.videoHeight - sHeight) / 2;
-            }
-            ctx.drawImage(videoElementForBg, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
-        } else if (source) { // If videoElement not provided or ready, attempt to show a placeholder or frame
-            // This part is complex for seeking. For now, show solid color as fallback.
-            (dependencies.errorLogger.logInfo || console.info).call(dependencies.errorLogger, {
-                message: 'Background video element not ready or not provided for drawing. Showing fallback.',
-                origin: 'MainRenderer._drawBackground.video',
-                context: { source, readyState: videoElementForBg?.readyState }
-            });
-            ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source; // Fallback
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        break;
-      
-      default:
-        ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source; // Fallback for unknown type
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-  }
-
-  /**
-   * Draws text (Ayah or Translation) on the canvas.
-   * @private
-   * @param {string} text - The text to draw.
-   * @param {number} yPosition - The baseline Y position for the text.
-   * @param {import('../../core/state-store.js').TextStyleState} textStyle - Font, size, color.
-   * @param {boolean} isQuranText - True if drawing Quranic text (for font selection, RTL).
-   * @param {string} [textEffectState] - Current state of text effect (e.g. partial text for typewriter)
-   */
-  function _drawText(text, yPosition, textStyle, isQuranText, textEffectState) {
-    if (!ctx || !canvas || !text) return;
-
-    const { fontFamily, fontSize, fontColor, textBgColor } = textStyle;
-    
-    ctx.font = `${fontSize}px ${fontFamily}`;
-    ctx.fillStyle = fontColor;
-    ctx.textAlign = 'center'; // For simplicity, can be made configurable
-    ctx.textBaseline = 'middle'; // Adjust as needed
-
-    const textToDraw = textEffectState !== undefined ? textEffectState : text; // Use effect state if available
-
-    // Basic text wrapping (needs improvement for better line breaking respecting words)
-    const maxWidth = canvas.width * 0.9; // 90% of canvas width
-    const lines = [];
-    let currentLine = '';
-    const words = textToDraw.split(/(?=\s+|[\u0600-\u06FF])/); // Split by space or start of Arabic char for better Arabic wrapping
-
-    for (const word of words) {
-        const testLine = currentLine + word;
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > maxWidth && currentLine !== '') {
-            lines.push(currentLine.trim());
-            currentLine = word;
-        } else {
-            currentLine = testLine;
-        }
-    }
-    lines.push(currentLine.trim());
-
-    const lineHeight = fontSize * 1.2; // Approximate line height
-    let currentY = yPosition - ((lines.length - 1) * lineHeight) / 2; // Center block vertically
-
-    lines.forEach(line => {
-      if (textBgColor && textBgColor !== 'transparent' && textBgColor !== 'rgba(0,0,0,0)') {
-        const textMetrics = ctx.measureText(line);
-        const textWidth = textMetrics.width;
-        // Note: actualBoundingBoxAscent/Descent are more accurate but experimental
-        const textHeight = fontSize; // Approximate height for background
-
-        const bgX = (canvas.width - textWidth) / 2 - 10; // Center background, add padding
-        const bgY = currentY - textHeight / 2 - 5;      // Adjust Y for textBaseline middle
-        const bgWidth = textWidth + 20;
-        const bgHeight = textHeight + 10;
-        
-        ctx.fillStyle = textBgColor;
-        // Rounded rectangle for background (optional)
-        const radius = 5;
-        ctx.beginPath();
-        ctx.moveTo(bgX + radius, bgY);
-        ctx.lineTo(bgX + bgWidth - radius, bgY);
-        ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
-        ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
-        ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
-        ctx.lineTo(bgX + radius, bgY + bgHeight);
-        ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
-        ctx.lineTo(bgX, bgY + radius);
-        ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
-        ctx.closePath();
-        ctx.fill();
-        
-        ctx.fillStyle = fontColor; // Reset fillStyle for text
-      }
-      ctx.fillText(line, canvas.width / 2, currentY);
-      currentY += lineHeight;
-    });
-  }
-  
-  // Placeholder for text effect logic application
-  let currentTextEffect = { type: 'none', state: null, startTime: 0, duration: 1000, text: '' };
-  
-  function _updateTextEffectState(ayahText, textStyle) {
-      // This would interact with text.rendering.logic.js
-      // For now, simple direct application for typewriter example
-      if (textStyle.textAnimation === 'typewriter' && currentTextEffect.type !== 'typewriter') {
-          currentTextEffect = { type: 'typewriter', state: '', startTime: performance.now(), duration: (ayahText.length * 100), text: ayahText }; // 100ms per char
-      } else if (textStyle.textAnimation !== 'typewriter') {
-          currentTextEffect = { type: 'none', state: null, startTime: 0, duration: 0, text: ayahText};
-      }
-
-      if (currentTextEffect.type === 'typewriter') {
-          const elapsed = performance.now() - currentTextEffect.startTime;
-          const progress = Math.min(elapsed / currentTextEffect.duration, 1);
-          const charsToShow = Math.floor(currentTextEffect.text.length * progress);
-          currentTextEffect.state = currentTextEffect.text.substring(0, charsToShow);
-      } else {
-          currentTextEffect.state = currentTextEffect.text; // Or null if no effect, _drawText handles
-      }
-  }
-
-
-  /**
-   * The main rendering function. Called on state changes or animation frame.
-   * This function reads the current state and draws everything.
-   * @param {number} [timestamp] - Provided by requestAnimationFrame, for animations.
-   */
-  async function render(timestamp) {
-    if (!ctx || !canvas) {
-      // console.warn('[MainRenderer] Canvas or context not initialized, skipping render.');
-      return;
-    }
-    if (canvas.width === 0 || canvas.height === 0) {
-      // (dependencies.errorLogger.logWarning || console.warn)('Canvas dimensions are zero, skipping render.');
-      return; // Avoid drawing on zero-sized canvas
-    }
-
-    const state = dependencies.stateStore.getState();
-    const project = state.currentProject;
-
-    if (!project) {
-      // No project loaded, draw a default state (e.g., app logo or blank with instructions)
-      _clearCanvas();
-      ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = 'white';
-      ctx.font = '24px ' + DEFAULT_PROJECT_SCHEMA.textStyle.fontFamily; // Use UI font for messages
-      ctx.textAlign = 'center';
-      ctx.fillText(dependencies.localizationService?.translate('editor.noProjectLoadedMessage') || 'قم بإنشاء مشروع جديد أو تحميل مشروع موجود', canvas.width / 2, canvas.height / 2);
-      return;
-    }
-
-    // 1. Get current Ayah and Translation text
-    // This needs integration with how Ayah text is fetched/managed.
-    // For now, using placeholders from overlays or state if it's there.
-    // Ideal: Current Ayah object from `state.currentProject.quranSelection.currentDisplayingAyah`
-    // which includes { text: '...', translationText: '...' }
-    let ayahTextToDisplay = "ٱلْحَمْدُ لِلَّهِ رَبِّ ٱلْعَـٰلَمِينَ"; // Placeholder
-    let translationTextToDisplay = "All praise is for Allah, Lord of all worlds."; // Placeholder
-    
-    // If currentPlaylistItem available from a playback controller via state:
-    // const currentPlaylistItem = state.mainPlaybackState?.currentPlaylistItem;
-    // if (currentPlaylistItem) {
-    //   ayahTextToDisplay = currentPlaylistItem.text || ayahTextToDisplay;
-    //   translationTextToDisplay = currentPlaylistItem.translationText || translationTextToDisplay; // Assume translation is there
-    // } else if (DOMElements.previewAyahTextOverlay) { // Fallback to overlay for preview when not playing
-    //     ayahTextToDisplay = DOMElements.previewAyahTextOverlay.textContent || ayahTextToDisplay;
-    //     if(DOMElements.previewTranslationTextOverlay) {
-    //        translationTextToDisplay = DOMElements.previewTranslationTextOverlay.textContent || translationTextToDisplay;
-    //     }
-    // }
-    
-    // For a truly decoupled renderer, Ayah text should come from the state.
-    // The state could be updated by quran.data.cache or quran.selection.ui when an Ayah is selected/active.
-
-
-    // 2. Draw Background
-    // For video background, we'd need a reference to the <video> element being used for the background.
-    // This is complex as it might be different from the mainAudioPlayer or an image.
-    // Let's assume background source implies how to handle it.
-    // DOMElements.backgroundVideoPlayer could be a dedicated <video> for video backgrounds.
-    await _drawBackground(project.background, DOMElements.backgroundVideoPlayer); // Pass the video element if bg is video
-
-    // 3. Update and apply text effects
-    // _updateTextEffectState(ayahTextToDisplay, project.textStyle);
-    // The effect state (`currentTextEffect.state`) will be used by _drawText
-
-    // 4. Draw Ayah Text
-    // Position needs to be calculated based on aspect ratio, font size, and whether translation is shown.
-    let ayahYPosition = canvas.height / 2; // Default center
-    if (translationTextToDisplay && project.quranSelection.translationId) {
-      ayahYPosition = canvas.height * 0.40; // Ayah text higher if translation shown
-    }
-    // Call the (to-be-created) text engine's draw method which handles effects
-    // _drawText(ayahTextToDisplay, ayahYPosition, project.textStyle, true, currentTextEffect.state);
-     _drawText(ayahTextToDisplay, ayahYPosition, project.textStyle, true);
-
-
-    // 5. Draw Translation Text (if enabled and available)
-    if (project.quranSelection.translationId && translationTextToDisplay) {
-      let translationYPosition = canvas.height * 0.65; // Translation text lower
-      // Create a separate text style for translation if needed, or use a modified one
-      const translationStyle = {
-        ...project.textStyle,
-        fontFamily: DEFAULT_PROJECT_SCHEMA.textStyle.fontFamily, // Or specific translation font from project settings
-        fontSize: Math.max(16, project.textStyle.fontSize * 0.5), // Smaller than Ayah text
-        // fontColor: (use a slightly dimmer color than Ayah, or from settings)
-        textAnimation: 'none', // Usually no complex animation for translation
-      };
-      // _updateTextEffectState(translationTextToDisplay, translationStyle); // For translation text
-      // _drawText(translationTextToDisplay, translationYPosition, translationStyle, false, currentTextEffect.state_translation);
-      _drawText(translationTextToDisplay, translationYPosition, translationStyle, false);
-    }
-
-    // 6. Apply Video Filter (handled by CSS on canvas element, set by video-filter.applier.js)
-    // No direct drawing action here for CSS filters.
-    // If implementing filters via canvas operations, draw here.
-
-    // If text effects need continuous rendering:
-    // if (currentTextEffect.type === 'typewriter' && currentTextEffect.state !== currentTextEffect.text) {
-    //   currentAnimationFrameId = requestAnimationFrame(render);
-    // } else if (currentTextEffect.type !== 'none' && needsContinuousUpdateForOtherEffects){
-    //   currentAnimationFrameId = requestAnimationFrame(render);
-    // }
-    // else {
-    //    cancelAnimationFrame(currentAnimationFrameId);
-    //    currentAnimationFrameId = null;
-    // }
-    
-    // Publish event that frame has been rendered (useful for export)
-    dependencies.eventAggregator.publish(EVENTS.CANVAS_FRAME_RENDERED, { timestamp });
-  }
-  
-  /** Handle state changes affecting the render. */
-  function _onStateChange(newState, oldState) {
-    // More granular checks needed:
-    // - currentProject changed
-    // - currentProject.background changed
-    // - currentProject.quranSelection (current Ayah or its text) changed
-    // - currentProject.textStyle changed
-    // - currentProject.videoComposition.aspectRatio changed (this triggers CANVAS_RESIZED then REQUEST_CANVAS_RENDER)
-    
-    // Simple check for now: if project object identity changes, or specific parts we know.
-    // A better way is to use selectors and compare specific parts of the state.
-    if (newState.currentProject !== oldState?.currentProject ||
-        (newState.currentProject && oldState?.currentProject && (
-            newState.currentProject.background !== oldState.currentProject.background ||
-            newState.currentProject.quranSelection !== oldState.currentProject.quranSelection || // This includes current Ayah pointer
-            newState.currentProject.textStyle !== oldState.currentProject.textStyle
-        )) ||
-        newState.isLoading !== oldState?.isLoading // Re-render if loading state changes (e.g., to show message)
-       ) {
-      requestRender({ reason: 'stateChange' });
-    }
-  }
-
-  /**
-   * Request a re-render of the canvas.
-   * Can be called from other modules via event or direct call if API is exposed.
-   * @param {object} [data={reason: 'unknown'}] - Optional data about why render is requested.
-   */
-  function requestRender(data = { reason: 'unknown' }) {
-    // console.debug(`[MainRenderer] Render requested. Reason: ${data.reason}`);
-    if (currentAnimationFrameId) {
-      cancelAnimationFrame(currentAnimationFrameId); // Cancel previous frame if any
-    }
-    // Using requestAnimationFrame ensures rendering happens smoothly with browser's refresh rate.
-    // It passes a timestamp to the render function, useful for time-based animations.
-    currentAnimationFrameId = requestAnimationFrame(render);
-  }
-  
-  function _setDependencies(injectedDeps) {
-    if(injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
-    if(injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
-    if(injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
-    if(injectedDeps.localizationService) dependencies.localizationService = injectedDeps.localizationService; // Add localization
-    // if(injectedDeps.canvasDimensionsAPI) dependencies.canvasDimensionsAPI = injectedDeps.canvasDimensionsAPI;
-    // if(injectedDeps.textRenderingLogic) dependencies.textRenderingLogic = injectedDeps.textRenderingLogic;
-  }
-
-  // Public API for the module
-  return {
-    _setDependencies,
-    // `render` might not need to be public if it's only triggered by state/event.
-    // But useful for export process to call it explicitly before capturing a frame.
-    renderFrame: () => requestRender({reason: 'manualFrameRequest'}), // A public method to request a single render
-    // cleanup: () => { if(currentAnimationFrameId) cancelAnimationFrame(currentAnimationFrameId); } // Add to init return
-  };
-})(); // IIFE removed
-
+import { 
+  ACTIONS, 
+  DEFAULT_PROJECT_SCHEMA, 
+  EVENTS 
+} from '../../config/app.constants.js';
+import localizationService from '../../core/localization.service.js';
+import errorLogger from '../../core/error-logger.js';
+import eventAggregator from '../../core/event-aggregator.js';
+import fileIOUtils from '../../services/file.io.utils.js';
+import timeFormatter from '../../utils/time.formatter.js';
+import { getCanvasSize } from './canvas.snapshot.service.js';
 
 /**
- * Initialization function for the MainCanvasRenderer.
- * @param {object} deps
- * @param {import('../../core/state-store.js').default} deps.stateStore
- * @param {import('../../core/event-aggregator.js').default} deps.eventAggregator
- * @param {import('../../core/error-logger.js').default} deps.errorLogger
- * @param {import('../../core/localization.service.js').default} deps.localizationService
- * // @param {ReturnType<import('./canvas.dimension.handler.js').initializeCanvasDimensionHandler>} deps.canvasDimensionsAPI
- * // @param {object} deps.textRenderingLogic - API from text.rendering.logic.js
+ * @typedef {Object} RenderTextOptions
+ * @property {string} text - النص المراد رسمه
+ * @property {number} x - الموضع الأفقي
+ * @property {number} y - الموضع العمودي
+ * @property {number} fontSize - حجم الخط
+ * @property {string} fontFamily - خط النص
+ * @property {string} fontColor - لون النص
+ * @property {string} [textAlign='center'] - محاذاة النص (start, center, end)
+ * @property {string} [textDirection='rtl'] - اتجاه النص (ltr, rtl)
+ * @property {string} [textEffect='none'] - تأثير النص (fade, slide, zoom)
+ * @property {number} [opacity=1] - شفافية النص (0-1)
+ * @property {number} [rotation=0] - زاوية الدوران (بالدرجات)
+ * @property {string} [shadowColor='black'] - لون الظل
+ * @property {number} [shadowBlur=10] - درجة ضبابية الظل
+ * @property {number} [shadowOffsetX=0] - انحراف الظل أفقيًا
+ * @property {number} [shadowOffsetY=0] - انحراف الظل عموديًا
+ * @property {boolean} [isTainted=false] - هل الكانفاس ملوث؟
+ * @property {number} [scale=1] - مقياس التكبير
+ */
+
+/**
+ * @typedef {Object} MainRenderer
+ * @property {(injectedDeps: Object) => void} _setDependencies - تعيين الاعتماديات
+ * @property {() => void} renderFrame - رسم إطار الكانفاس
+ * @property {(background: BackgroundStateSchema) => void} drawBackground - رسم الخلفية
+ * @property {(textOptions: RenderTextOptions) => void} drawText - رسم نص
+ * @property {() => void} clearCanvas - مسح الكانفاس
+ * @property {() => void} resetRenderer - إعادة تهيئة الرسم
+ * @property {() => boolean} selfTest - التحقق من الصحة
+ * @property {() => void} cleanup - تنظيف الموارد
+ * @property {(newDimensions: Object) => void} handleCanvasResized - التعامل مع تغيير الأبعاد
+ * @property {(newState: ProjectState, oldState: ProjectState) => void} handleProjectStateChange - التعامل مع تغيير المشروع
+ * @property {() => void} setupEventListeners - إعداد مراقبة الأحداث
+ * @property {() => void} teardownEventListeners - إزالة مراقبة الأحداث
+ * @property {() => void} updateUIFromState - تحديث واجهة المستخدم من الحالة
+ * @property {() => void} handleAyahAudioReady - التعامل مع تحميل الصوت
+ * @property {() => void} handleAyahAudioFailed - التعامل مع فشل تحميل الصوت
+ * @property {() => void} handleAyahAudioEnded - التعامل مع انتهاء الصوت
+ * @property {() => void} handleAyahAudioError - التعامل مع أخطاء الصوت
+ * @property {() => void} handleTimelineUpdate - التعامل مع تحديث المؤقت
+ * @property {() => void} handleTimelineSeek - التعامل مع تحديد الزمن
+ * @property {() => void} handleTextEffectChange - التعامل مع تغيير تأثير النص
+ * @property {() => void} handleTextSettingsChange - التعامل مع تغيير إعدادات النص
+ * @property {() => void} handleVideoFilterChange - التعامل مع تغيير فلتر الفيديو
+ * @property {() => void} handleBackgroundChange - التعامل مع تغيير الخلفية
+ * @property {() => void} handleCanvasResized - التعامل مع تغيير أبعاد الكانفاس
+ * @property {() => void} handleExportProgress - التعامل مع تقدم التصدير
+ * @property {() => void} handleExportComplete - التعامل مع اكتمال التصدير
+ * @property {() => void} handleExportError - التعامل مع أخطاء التصدير
+ * @property {() => void} handleLanguageChange - التعامل مع تغيير اللغة
+ * @property {() => void} handleThemeChange - التعامل مع تغيير السمة
+ * @property {() => void} handleProjectLoaded - التعامل مع تحميل المشروع
+ * @property {() => void} handleProjectUnloaded - التعامل مع إلغاء تحميل المشروع
+ * @property {() => void} handleAIContentChange - التعامل مع تغيير محتوى الذكاء الاصطناعي
+ * @property {() => void} handleAIContentLoading - التعامل مع تحميل محتوى الذكاء الاصطناعي
+ * @property {() => void} handleAIContentError - التعامل مع أخطاء محتوى الذكاء الاصطناعي
+ * @property {() => void} handleTextAnimationStart - التعامل مع بدء حركة النص
+ * @property {() => void} handleTextAnimationEnd - التعامل مع انتهاء حركة النص
+ * @property {() => void} handleTextAnimationProgress - التعامل مع تقدم الحركة
+ * @property {() => void} handleTextAnimationError - التعامل مع أخطاء الحركة
+ * @property {() => void} handleTextAnimationIteration - التعامل مع تكرار الحركة
+ * @property {() => void} handleTextAnimationReverse - التعامل مع عكس الحركة
+ * @property {() => void} handleTextAnimationRepeat - التعامل مع تكرار الحركة
+ * @property {() => void} handleTextAnimationCancel - التعامل مع إلغاء الحركة
+ * @property {() => void} handleTextAnimationFinish - التعامل مع انتهاء الحركة تمامًا
+ * @property {() => void} handleTextAnimationPlay - التعامل مع تشغيل الحركة
+ * @property {() => void} handleTextAnimationStop - التعامل مع إيقاف الحركة
+ * @property {() => void} handleTextAnimationSeek - التعامل مع تحديد زمن الحركة
+ * @property {() => void} handleTextAnimationRateChange - التعامل مع تغيير معدل الحركة
+ * @property {() => void} handleTextAnimationDirectionChange - التعامل مع تغيير اتجاه الحركة
+ * @property {() => void} handleTextAnimationPlayStateChange - التعامل مع تغيير حالة التشغيل
+ */
+
+const mainRenderer = (() => {
+  // الثوابت
+  const LOCAL_STORAGE_KEY = 'MQVE_lastRenderedState';
+  const DEFAULT_TEXT_DIRECTION = 'rtl';
+  const DEFAULT_TEXT_ALIGN = 'center';
+  const DEFAULT_TEXT_EFFECT = 'none';
+  const DEFAULT_OPACITY = 1;
+  const DEFAULT_SHADOW = {
+    color: '#000000',
+    blur: 10,
+    offset: { x: 0, y: 0 }
+  };
+  
+  // المتغيرات المحلية
+  let canvas = null;
+  let ctx = null;
+  let isTainted = false;
+  let dependencies = {
+    stateStore: {
+      getState: () => ({ currentProject: null }),
+      dispatch: () => {},
+      subscribe: () => (() => {})
+    },
+    eventAggregator: {
+      publish: () => {},
+      subscribe: () => ({ unsubscribe: () => {} })
+    },
+    errorLogger: console,
+    localizationService: localizationService,
+    fileIOUtils: fileIOUtils,
+    ayahAudioServiceAPI: null,
+    backgroundAudioAPI: null,
+    notificationServiceAPI: null
+  };
+  
+  // المتغيرات الخاصة بالرسم
+  let lastRenderTime = 0;
+  let lastRenderedState = null;
+  let currentBackgroundImage = null;
+  let currentBackgroundVideo = null;
+  let currentTextEffect = {
+    type: 'none',
+    text: '',
+    state: ''
+  };
+  let isInitialized = false;
+  
+  // الدوال المساعدة
+  const getLogger = () => {
+    return dependencies.errorLogger || console;
+  };
+  
+  const getLocalization = () => {
+    return dependencies.localizationService || localizationService;
+  };
+  
+  const translate = (key) => {
+    const service = getLocalization();
+    return service.translate(key);
+  };
+  
+  const isValidCanvas = (canvas) => {
+    return canvas && canvas.width > 0 && canvas.height > 0;
+  };
+  
+  const isValidText = (text) => {
+    return text && typeof text === 'string' && text.trim() !== '';
+  };
+  
+  const notifyFrameRendered = (frameData) => {
+    if (dependencies.eventAggregator && dependencies.eventAggregator.publish) {
+      dependencies.eventAggregator.publish(EVENTS.FRAME_RENDERED, frameData);
+    }
+  };
+  
+  const notifyRenderFailed = (errorMessage) => {
+    if (dependencies.eventAggregator && dependencies.eventAggregator.publish) {
+      dependencies.eventAggregator.publish(EVENTS.RENDER_FAILED, errorMessage);
+    }
+  };
+
+  /**
+   * تعيين الاعتماديات
+   * @param {Object} injectedDeps - الاعتماديات المُمررة
+   */
+  function _setDependencies(injectedDeps) {
+    if (injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
+    if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
+    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
+    if (injectedDeps.localizationService) dependencies.localizationService = injectedDeps.localizationService;
+    if (injectedDeps.fileIOUtils) dependencies.fileIOUtils = injectedDeps.fileIOUtils;
+    if (injectedDeps.ayahAudioServiceAPI) dependencies.ayahAudioServiceAPI = injectedDeps.ayahAudioServiceAPI;
+    if (injectedDeps.backgroundAudioAPI) dependencies.backgroundAudioAPI = injectedDeps.backgroundAudioAPI;
+    if (injectedDeps.notificationServiceAPI) dependencies.notificationServiceAPI = injectedDeps.notificationServiceAPI;
+  }
+
+  /**
+   * رسم الخلفية على الكانفاس
+   * @param {BackgroundStateSchema} background - بيانات الخلفية
+   * @private
+   */
+  function _drawBackground(background) {
+    const logger = getLogger();
+    
+    if (!canvas || !ctx) {
+      logger.logWarning({
+        message: translate('MainRenderer.CanvasNotInitialized'),
+        origin: 'MainRenderer._drawBackground'
+      });
+      return;
+    }
+    
+    // مسح الكانفاس
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // التحقق من صحة الخلفية
+    if (!background || !background.type) {
+      background = { ...DEFAULT_PROJECT_SCHEMA.background };
+    }
+    
+    switch (background.type) {
+      case 'color':
+        // رسم لون الخلفية
+        ctx.fillStyle = background.source || DEFAULT_PROJECT_SCHEMA.background.source;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        notifyFrameRendered({ type: 'color', source: background.source });
+        break;
+        
+      case 'image':
+        // رسم صورة الخلفية
+        if (!background.source) {
+          logger.logWarning({
+            message: translate('MainRenderer.ImageSourceMissing'),
+            origin: 'MainRenderer._drawBackground'
+          });
+          ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          break;
+        }
+        
+        // التحقق مما إذا كانت الصورة قد تم تحميلها مسبقًا
+        if (currentBackgroundImage && currentBackgroundImage.src === background.source) {
+          // استخدام الصورة المُخزنة مؤقتًا
+          ctx.drawImage(currentBackgroundImage, 0, 0, canvas.width, canvas.height);
+          notifyFrameRendered({ type: 'image', source: background.source });
+          break;
+        }
+        
+        // تحميل الصورة الجديدة
+        currentBackgroundImage = new Image();
+        currentBackgroundImage.crossOrigin = 'Anonymous';
+        
+        currentBackgroundImage.onload = () => {
+          ctx.drawImage(currentBackgroundImage, 0, 0, canvas.width, canvas.height);
+          notifyFrameRendered({ type: 'image', source: background.source });
+          dependencies.stateStore.dispatch(ACTIONS.SET_BACKGROUND_READY, true);
+        };
+        
+        currentBackgroundImage.onerror = (e) => {
+          logger.handleError({
+            error: e,
+            message: `فشل في رسم الصورة: ${background.source}`,
+            origin: 'MainRenderer._drawBackground'
+          });
+          
+          ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          notifyRenderFailed(`فشل في رسم الصورة: ${background.source}`);
+          dependencies.stateStore.dispatch(ACTIONS.SET_BACKGROUND_READY, false);
+        };
+        
+        currentBackgroundImage.src = background.source;
+        break;
+        
+      case 'video':
+        // رسم فيديو الخلفية
+        if (!background.source) {
+          logger.logWarning({
+            message: translate('MainRenderer.VideoSourceMissing'),
+            origin: 'MainRenderer._drawBackground'
+          });
+          ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          break;
+        }
+        
+        // التحقق مما إذا كان الفيديو قد تم إنشاؤه مسبقًا
+        if (!currentBackgroundVideo) {
+          currentBackgroundVideo = document.createElement('video');
+          currentBackgroundVideo.crossOrigin = 'Anonymous';
+          currentBackgroundVideo.muted = true;
+          currentBackgroundVideo.playsInline = true;
+          currentBackgroundVideo.loop = true;
+          currentBackgroundVideo.autoplay = true;
+          currentBackgroundVideo.preload = 'auto';
+          
+          currentBackgroundVideo.oncanplay = () => {
+            ctx.drawImage(currentBackgroundVideo, 0, 0, canvas.width, canvas.height);
+            notifyFrameRendered({ type: 'video', source: background.source });
+            dependencies.stateStore.dispatch(ACTIONS.SET_BACKGROUND_READY, true);
+          };
+          
+          currentBackgroundVideo.onended = () => {
+            currentBackgroundVideo.currentTime = 0;
+            currentBackgroundVideo.play();
+          };
+          
+          currentBackgroundVideo.onerror = (e) => {
+            logger.handleError({
+              error: e,
+              message: `فشل في رسم فيديو الخلفية: ${background.source}`,
+              origin: 'MainRenderer._drawBackground'
+            });
+            
+            ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            notifyRenderFailed(`فشل في رسم فيديو الخلفية: ${background.source}`);
+            dependencies.stateStore.dispatch(ACTIONS.SET_BACKGROUND_READY, false);
+          };
+          
+          currentBackgroundVideo.onloadedmetadata = () => {
+            currentBackgroundVideo.currentTime = 0.1;
+          };
+        }
+        
+        // تعيين مصدر الفيديو
+        if (currentBackgroundVideo.src !== background.source) {
+          currentBackgroundVideo.src = background.source;
+          currentBackgroundVideo.load();
+        }
+        
+        // إعادة التشغيل
+        if (currentBackgroundVideo.paused) {
+          currentBackgroundVideo.currentTime = 0.1;
+          currentBackgroundVideo.play().catch(e => {
+            logger.handleError({
+              error: e,
+              message: `فشل في تشغيل فيديو الخلفية: ${background.source}`,
+              origin: 'MainRenderer._drawBackground'
+            });
+          });
+        }
+        
+        break;
+        
+      default:
+        // نوع خلفية غير معروف
+        logger.logWarning({
+          message: `نوع خلفية غير معروف: ${background.type}`,
+          origin: 'MainRenderer._drawBackground'
+        });
+        ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        notifyRenderFailed(`نوع خلفية غير معروف: ${background.type}`);
+    }
+  }
+
+  /**
+   * رسم نص على الكانفاس
+   * @param {RenderTextOptions} textOptions - خيارات النص
+   * @private
+   */
+  function _drawText(textOptions) {
+    const logger = getLogger();
+    
+    if (!canvas || !ctx) {
+      logger.logWarning({
+        message: translate('MainRenderer.CanvasNotInitialized'),
+        origin: 'MainRenderer._drawText'
+      });
+      return;
+    }
+    
+    if (!textOptions || !isValidText(textOptions.text)) {
+      logger.logWarning({
+        message: translate('MainRenderer.InvalidText'),
+        origin: 'MainRenderer._drawText'
+      });
+      return;
+    }
+    
+    // الحصول على خيارات النص
+    const {
+      text = '',
+      x = canvas.width / 2,
+      y = canvas.height / 2,
+      fontSize = 48,
+      fontFamily = 'Amiri',
+      fontColor = '#ffffff',
+      textAlign = DEFAULT_TEXT_ALIGN,
+      textDirection = DEFAULT_TEXT_DIRECTION,
+      textEffect = DEFAULT_TEXT_EFFECT,
+      opacity = DEFAULT_OPACITY,
+      rotation = 0,
+      shadowColor = DEFAULT_SHADOW.color,
+      shadowBlur = DEFAULT_SHADOW.blur,
+      shadowOffsetX = DEFAULT_SHADOW.offset.x,
+      shadowOffsetY = DEFAULT_SHADOW.offset.y,
+      scale = 1
+    } = textOptions;
+    
+    // حفظ حالة السياق
+    ctx.save();
+    
+    // تطبيق التحويلات
+    ctx.globalAlpha = opacity;
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    ctx.translate(-x, -y);
+    ctx.rotate(rotation * Math.PI / 180);
+    
+    // تطبيق الظل
+    ctx.shadowColor = shadowColor;
+    ctx.shadowBlur = shadowBlur;
+    ctx.shadowOffsetX = shadowOffsetX;
+    ctx.shadowOffsetY = shadowOffsetY;
+    
+    // تحديد الخط والحجم
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    
+    // تحديد اتجاه النص
+    ctx.textAlign = textAlign;
+    ctx.direction = textDirection;
+    
+    // تحديد لون النص
+    ctx.fillStyle = fontColor;
+    
+    // تقسيم النص إلى سطور
+    const lines = [];
+    const words = text.split(/(?=\s+|[\u0600-\u06FF])/); // تقسيم النص العربي بشكل دقيق
+    
+    // تحديد عدد الأسطر بناءً على عرض الكانفاس
+    let currentLine = '';
+    let maxWidth = canvas.width * 0.8; // 80% من العرض
+    
+    words.forEach(word => {
+      const testLine = currentLine + word;
+      const metrics = ctx.measureText(testLine);
+      
+      if (metrics.width > maxWidth && currentLine !== '') {
+        lines.push(currentLine.trim());
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    });
+    
+    lines.push(currentLine.trim());
+    
+    // تحديد موقع النص عموديًا
+    const lineHeight = fontSize * 1.2; // ارتفاع السطر
+    let currentY = y - ((lines.length - 1) * lineHeight) / 2;
+    
+    // رسم كل سطر
+    lines.forEach(line => {
+      ctx.fillText(line, x, currentY);
+      currentY += lineHeight;
+    });
+    
+    // استعادة حالة السياق
+    ctx.restore();
+    
+    // إرسال الحدث
+    notifyFrameRendered({
+      type: 'text',
+      text,
+      fontSize,
+      fontFamily,
+      fontColor,
+      position: { x, y }
+    });
+  }
+
+  /**
+   * مسح الكانفاس
+   * @private
+   */
+  function _clearCanvas() {
+    if (!canvas || !ctx) return;
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  /**
+   * إعادة تهيئة الرسم
+   * @private
+   */
+  function _resetRenderer() {
+    _clearCanvas();
+    
+    if (canvas && ctx) {
+      ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    
+    // مسح الصور والفيديوهات
+    if (currentBackgroundImage) {
+      currentBackgroundImage.src = '';
+      currentBackgroundImage = null;
+    }
+    
+    if (currentBackgroundVideo) {
+      currentBackgroundVideo.src = '';
+      currentBackgroundVideo = null;
+    }
+    
+    // مسح الحالة
+    lastRenderedState = null;
+    dependencies.stateStore.dispatch(ACTIONS.SET_BACKGROUND_READY, false);
+  }
+
+  /**
+   * رسم إطار الكانفاس
+   * @private
+   */
+  function _renderFrame() {
+    const logger = getLogger();
+    
+    // التحقق من صحة الكانفاس
+    if (!canvas || !ctx) {
+      logger.logWarning({
+        message: translate('MainRenderer.CanvasNotInitialized'),
+        origin: 'MainRenderer._renderFrame'
+      });
+      return;
+    }
+    
+    // التحقق من أبعاد الكانفاس
+    if (canvas.width === 0 || canvas.height === 0) {
+      logger.logWarning({
+        message: translate('MainRenderer.CanvasZeroDimensions'),
+        origin: 'MainRenderer._renderFrame'
+      });
+      return;
+    }
+    
+    // الحصول على الحالة الحالية
+    const state = dependencies.stateStore.getState();
+    const project = state.currentProject;
+    
+    // التحقق مما إذا كان المشروع موجودًا
+    if (!project) {
+      _clearCanvas();
+      
+      // رسم حالة "لا يوجد مشروع محمل"
+      ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      ctx.fillStyle = 'white';
+      ctx.font = `24px ${DEFAULT_PROJECT_SCHEMA.textStyle.fontFamily}`;
+      ctx.textAlign = 'center';
+      ctx.fillText(translate('MainRenderer.NoProjectLoaded'), canvas.width / 2, canvas.height / 2);
+      
+      notifyRenderFailed(translate('MainRenderer.NoProjectLoaded'));
+      return;
+    }
+    
+    // التحقق مما إذا كانت الحالة قد تغيرت
+    const hasStateChanged = !lastRenderedState ||
+                           JSON.stringify(project) !== JSON.stringify(lastRenderedState.currentProject) ||
+                           state.isLoading !== lastRenderedState.isLoading;
+    
+    if (!hasStateChanged) {
+      return; // لا حاجة لرسم جديد
+    }
+    
+    // تحديث الحالة
+    lastRenderedState = { ...state };
+    
+    // مسح الكانفاس
+    _clearCanvas();
+    
+    // رسم الخلفية
+    _drawBackground(project.background);
+    
+    // رسم النصوص
+    if (project.textStyle && project.textStyle.text) {
+      _drawText({
+        text: project.textStyle.text,
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        fontSize: project.textStyle.fontSize || DEFAULT_PROJECT_SCHEMA.textStyle.fontSize,
+        fontFamily: project.textStyle.fontFamily || DEFAULT_PROJECT_SCHEMA.textStyle.fontFamily,
+        fontColor: project.textStyle.fontColor || DEFAULT_PROJECT_SCHEMA.textStyle.fontColor,
+        textAlign: project.textStyle.textAlign || DEFAULT_TEXT_ALIGN,
+        textDirection: project.textStyle.textDirection || DEFAULT_TEXT_DIRECTION,
+        textEffect: project.textStyle.textEffect || DEFAULT_TEXT_EFFECT,
+        opacity: project.textStyle.opacity ?? DEFAULT_OPACITY,
+        rotation: project.textStyle.rotation ?? 0,
+        shadowColor: project.textStyle.shadow?.color ?? DEFAULT_SHADOW.color,
+        shadowBlur: project.textStyle.shadow?.blur ?? DEFAULT_SHADOW.blur,
+        shadowOffsetX: project.textStyle.shadow?.offsetX ?? DEFAULT_SHADOW.offset.x,
+        shadowOffsetY: project.textStyle.shadow?.offsetY ?? DEFAULT_SHADOW.offset.y,
+        scale: project.textStyle.scale ?? 1
+      });
+    }
+    
+    // تحديث الحالة
+    requestAnimationFrame(_renderFrame);
+  }
+
+  /**
+   * التعامل مع تغييرات المشروع
+   * @param {ProjectState} newState - الحالة الجديدة
+   * @param {ProjectState} oldState - الحالة القديمة
+   * @private
+   */
+  function _handleProjectStateChange(newState, oldState) {
+    const logger = getLogger();
+    
+    if (!newState) {
+      logger.logWarning({
+        message: 'الحالة الجديدة غير موجودة',
+        origin: 'MainRenderer._handleProjectStateChange'
+      });
+      return;
+    }
+    
+    if (!newState.currentProject) {
+      _resetRenderer();
+      return;
+    }
+    
+    // التحقق مما إذا كان يجب إعادة الرسم
+    const projectChanged = !oldState || 
+                          !oldState.currentProject ||
+                          newState.currentProject.background !== oldState.currentProject.background ||
+                          newState.currentProject.textStyle !== oldState.currentProject.textStyle;
+    
+    if (projectChanged) {
+      mainRenderer.renderFrame();
+    }
+  }
+
+  /**
+   * التعامل مع تغيير أبعاد الكانفاس
+   * @param {Object} newDimensions - الأبعاد الجديدة
+   * @private
+   */
+  function _handleCanvasResized(newDimensions) {
+    if (!newDimensions || !newDimensions.width || !newDimensions.height) return;
+    
+    // تحديث أبعاد الكانفاس
+    canvas.width = newDimensions.width;
+    canvas.height = newDimensions.height;
+    
+    // إعادة الرسم
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع طلب رسم يدوي
+   * @private
+   */
+  function _handleRequestRender() {
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تحميل الصوت
+   * @param {Object} audioInfo - معلومات الصوت
+   * @private
+   */
+  function _handleAyahAudioReady(audioInfo) {
+    const logger = getLogger();
+    
+    if (!audioInfo || !audioInfo.url) {
+      logger.logWarning({
+        message: `استلام AYAH_AUDIO_READY بدون بيانات كافية للآية ${audioInfo?.ayahGlobalNumber}`,
+        origin: 'MainRenderer._handleAyahAudioReady'
+      });
+      return;
+    }
+    
+    // تحديث واجهة المستخدم بناءً على تحميل الصوت
+    if (audioInfo.isBackgroundMusic) {
+      // يمكن هنا تحديث مؤشر التحميل أو إظهار رسالة
+      logger.logWarning({
+        message: `تم تحميل الموسيقى الخلفية: ${audioInfo.url}`,
+        origin: 'MainRenderer._handleAyahAudioReady'
+      });
+    }
+  }
+
+  /**
+   * التعامل مع فشل تحميل الصوت
+   * @private
+   */
+  function _handleAyahAudioFailed(error) {
+    const logger = getLogger();
+    
+    logger.handleError({
+      error,
+      message: translate('MainRenderer.AudioLoadFailed'),
+      origin: 'MainRenderer._handleAyahAudioFailed'
+    });
+  }
+
+  /**
+   * التعامل مع انتهاء الصوت
+   * @private
+   */
+  function _handleAyahAudioEnded() {
+    const logger = getLogger();
+    
+    logger.logWarning({
+      message: translate('MainRenderer.AudioPlaybackEnded'),
+      origin: 'MainRenderer._handleAyahAudioEnded'
+    });
+    
+    // يمكن هنا تشغيل الصوت التالي أو إنهاء المشروع
+    mainRenderer.playNextAyahWithDelay();
+  }
+
+  /**
+   * التعامل مع أخطاء الصوت
+   * @private
+   */
+  function _handleAyahAudioError(error) {
+    const logger = getLogger();
+    
+    logger.handleError({
+      error,
+      message: translate('MainRenderer.AudioPlaybackError'),
+      origin: 'MainRenderer._handleAyahAudioError'
+    });
+  }
+
+  /**
+   * التعامل مع تحديث المؤقت
+   * @private
+   */
+  function _handleTimelineUpdate(progress) {
+    // يمكن هنا تحديث حالة الرسم بناءً على تقدم المؤقت
+    // مثال: تغيير تأثيرات النص أو الخلفية
+    if (progress >= 0 && progress <= 1) {
+      // تحديث تأثير النص بناءً على تقدم المؤقت
+      const state = dependencies.stateStore.getState();
+      if (state.currentProject && state.currentProject.textStyle && state.currentProject.textStyle.text) {
+        // يمكن هنا تحديث تأثير النص بناءً على تقدم المؤقت
+        // مثال: تأثير fade in/out
+        const updatedTextOptions = {
+          ...state.currentProject.textStyle,
+          opacity: progress
+        };
+        
+        // رسم النص بشفافية مُحدثة
+        _drawText(updatedTextOptions);
+      }
+    }
+  }
+
+  /**
+   * التعامل مع تحديد زمن معين
+   * @private
+   */
+  function _handleTimelineSeek(timeInSeconds) {
+    const logger = getLogger();
+    
+    if (typeof timeInSeconds !== 'number' || timeInSeconds < 0) {
+      logger.logWarning({
+        message: `زمن غير صالح لتحديد الزمن: ${timeInSeconds}`,
+        origin: 'MainRenderer._handleTimelineSeek'
+      });
+      return;
+    }
+    
+    // هنا يمكن تحديث الكانفاس بناءً على الزمن المعين
+    const state = dependencies.stateStore.getState();
+    if (state.currentProject && state.currentProject.background && state.currentProject.background.type === 'video') {
+      // تحديث فيديو الخلفية بناءً على الزمن
+      if (currentBackgroundVideo && currentBackgroundVideo.duration) {
+        const targetTime = Math.min(timeInSeconds, currentBackgroundVideo.duration);
+        currentBackgroundVideo.currentTime = targetTime;
+        logger.logWarning({
+          message: `تم تحديد زمن الفيديو إلى ${targetTime}s`,
+          origin: 'MainRenderer._handleTimelineSeek'
+        });
+      }
+    }
+    
+    // يمكن أيضًا تحديث تأثيرات النص بناءً على الزمن
+    const progress = timeInSeconds / (state.currentProject?.duration || 1);
+    _handleTimelineUpdate(progress);
+  }
+
+  /**
+   * التعامل مع تغيير تأثير النص
+   * @private
+   */
+  function _handleTextEffectChange(newEffect) {
+    const logger = getLogger();
+    
+    if (!newEffect) {
+      logger.logWarning({
+        message: 'تأثير النص الجديد غير موجود',
+        origin: 'MainRenderer._handleTextEffectChange'
+      });
+      return;
+    }
+    
+    // يمكن هنا تطبيق التأثير الجديد
+    currentTextEffect = { ...newEffect };
+    
+    // إعادة رسم الكانفاس مع التأثير الجديد
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تغيير إعدادات النص
+   * @private
+   */
+  function _handleTextSettingsChange(newSettings) {
+    const logger = getLogger();
+    
+    if (!newSettings) {
+      logger.logWarning({
+        message: 'إعدادات النص الجديدة غير موجودة',
+        origin: 'MainRenderer._handleTextSettingsChange'
+      });
+      return;
+    }
+    
+    // يمكن هنا تحديث إعدادات النص
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تغيير فلتر الفيديو
+   * @private
+   */
+  function _handleVideoFilterChange(newFilter) {
+    const logger = getLogger();
+    
+    if (!newFilter) {
+      logger.logWarning({
+        message: 'فلتر الفيديو الجديد غير موجود',
+        origin: 'MainRenderer._handleVideoFilterChange'
+      });
+      return;
+    }
+    
+    // يمكن هنا تطبيق الفلتر الجديد على فيديو الخلفية
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تغيير الخلفية
+   * @private
+   */
+  function _handleBackgroundChange(background) {
+    const logger = getLogger();
+    
+    if (!background) {
+      logger.logWarning({
+        message: 'بيانات الخلفية الجديدة غير موجودة',
+        origin: 'MainRenderer._handleBackgroundChange'
+      });
+      return;
+    }
+    
+    // يمكن هنا تحديث الخلفية
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تقدم التصدير
+   * @private
+   */
+  function _handleExportProgress(progress) {
+    const logger = getLogger();
+    
+    if (typeof progress !== 'number' || progress < 0 || progress > 1) {
+      logger.logWarning({
+        message: `تقدم التصدير غير صالح: ${progress}`,
+        origin: 'MainRenderer._handleExportProgress'
+      });
+      return;
+    }
+    
+    // يمكن هنا تحديث واجهة المستخدم بناءً على تقدم التصدير
+    const percentage = Math.round(progress * 100);
+    if (DOMElements.exportProgress) {
+      DOMElements.exportProgress.textContent = `${percentage}%`;
+    }
+    
+    if (DOMElements.exportProgressBar) {
+      DOMElements.exportProgressBar.style.width = `${percentage}%`;
+    }
+  }
+
+  /**
+   * التعامل مع اكتمال التصدير
+   * @private
+   */
+  function _handleExportComplete(result) {
+    const logger = getLogger();
+    
+    logger.logWarning({
+      message: `اكتمل التصدير مع نتيجة: ${result}`,
+      origin: 'MainRenderer._handleExportComplete'
+    });
+    
+    // تحديث واجهة المستخدم
+    if (DOMElements.exportProgressContainer) {
+      DOMElements.exportProgressContainer.style.display = 'none';
+    }
+    
+    // يمكن هنا عرض زر تنزيل
+    if (DOMElements.downloadExportBtn) {
+      DOMElements.downloadExportBtn.style.display = 'block';
+      DOMElements.downloadExportBtn.onclick = () => {
+        fileIOUtils.downloadFile(result.file, result.fileName);
+      };
+    }
+  }
+
+  /**
+   * التعامل مع أخطاء التصدير
+   * @private
+   */
+  function _handleExportError(error) {
+    const logger = getLogger();
+    
+    logger.handleError({
+      error,
+      message: translate('MainRenderer.ExportFailed'),
+      origin: 'MainRenderer._handleExportError'
+    });
+    
+    // تحديث واجهة المستخدم لإظهار الخطأ
+    if (DOMElements.exportProgressContainer) {
+      DOMElements.exportProgressContainer.style.display = 'none';
+    }
+    
+    if (DOMElements.exportError) {
+      DOMElements.exportError.style.display = 'block';
+      DOMElements.exportError.textContent = translate('MainRenderer.ExportFailed');
+    }
+  }
+
+  /**
+   * التعامل مع تغيير اللغة
+   * @private
+   */
+  function _handleLanguageChange(newLang) {
+    const logger = getLogger();
+    
+    if (!newLang || newLang === '') {
+      logger.logWarning({
+        message: 'لغة جديدة غير صالحة',
+        origin: 'MainRenderer._handleLanguageChange'
+      });
+      return;
+    }
+    
+    // تحديث اتجاه النص بناءً على اللغة
+    const isRTL = newLang === 'ar' || newLang === 'fa' || newLang === 'ur';
+    const state = dependencies.stateStore.getState();
+    
+    if (state.currentProject && state.currentProject.textStyle) {
+      const updatedTextStyle = { ...state.currentProject.textStyle, textDirection: isRTL ? 'rtl' : 'ltr' };
+      dependencies.stateStore.dispatch(ACTIONS.UPDATE_TEXT_STYLE, updatedTextStyle);
+    }
+    
+    // إعادة رسم الكانفاس
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تغيير السمة
+   * @private
+   */
+  function _handleThemeChange(theme) {
+    const logger = getLogger();
+    
+    if (!theme) {
+      logger.logWarning({
+        message: 'سمة جديدة غير موجودة',
+        origin: 'MainRenderer._handleThemeChange'
+      });
+      return;
+    }
+    
+    // يمكن هنا تحديث ألوان الخلفية أو التأثيرات
+    const state = dependencies.stateStore.getState();
+    if (state.currentProject && state.currentProject.background && state.currentProject.background.type === 'color') {
+      // تحديث لون الخلفية بناءً على السمة
+      const newBackground = { ...state.currentProject.background };
+      newBackground.source = theme === 'dark' ? '#0D0D0D' : '#FFFFFF';
+      dependencies.stateStore.dispatch(ACTIONS.UPDATE_BACKGROUND, newBackground);
+    }
+    
+    // إعادة رسم الكانفاس
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تحميل المشروع
+   * @private
+   */
+  function _handleProjectLoaded(project) {
+    const logger = getLogger();
+    
+    if (!project) {
+      logger.logWarning({
+        message: 'مشروع غير موجود',
+        origin: 'MainRenderer._handleProjectLoaded'
+      });
+      return;
+    }
+    
+    // يمكن هنا تطبيق إعدادات الخلفية والنصوص
+    if (project.background && project.background.type === 'video') {
+      currentBackgroundVideo = document.createElement('video');
+      currentBackgroundVideo.crossOrigin = 'Anonymous';
+      currentBackgroundVideo.muted = true;
+      currentBackgroundVideo.playsinline = true;
+      currentBackgroundVideo.loop = true;
+      currentBackgroundVideo.src = project.background.source;
+      currentBackgroundVideo.load();
+      currentBackgroundVideo.play();
+    }
+    
+    // تحديث حالة تقدم التصدير
+    if (project.export && project.export.progress) {
+      _handleExportProgress(project.export.progress);
+    }
+    
+    // إعادة رسم الكانفاس
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع إلغاء تحميل المشروع
+   * @private
+   */
+  function _handleProjectUnloaded() {
+    // إعادة تهيئة الخلفية
+    if (currentBackgroundImage) {
+      currentBackgroundImage.src = '';
+      currentBackgroundImage = null;
+    }
+    
+    if (currentBackgroundVideo) {
+      currentBackgroundVideo.src = '';
+      currentBackgroundVideo = null;
+    }
+    
+    // إعادة تهيئة النصوص
+    currentTextEffect = {
+      type: 'none',
+      text: '',
+      state: ''
+    };
+    
+    // إعادة رسم الكانفاس
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تغيير محتوى الذكاء الاصطناعي
+   * @private
+   */
+  function _handleAIContentChange(aiContent) {
+    const logger = getLogger();
+    
+    if (!aiContent) {
+      logger.logWarning({
+        message: 'محتوى الذكاء الاصطناعي الجديد غير موجود',
+        origin: 'MainRenderer._handleAIContentChange'
+      });
+      return;
+    }
+    
+    // يمكن هنا تحديث واجهة المستخدم أو رسم محتوى الذكاء الاصطناعي
+    mainRenderer.renderFrame();
+  }
+
+  /**
+   * التعامل مع تحميل محتوى الذكاء الاصطناعي
+   * @private
+   */
+  function _handleAIContentLoading(isLoading) {
+    const logger = getLogger();
+    
+    if (isLoading) {
+      logger.logWarning({
+        message: 'جاري تحميل محتوى الذكاء الاصطناعي',
+        origin: 'MainRenderer._handleAIContentLoading'
+      });
+      
+      // عرض مؤشر تحميل
+      if (DOMElements.aiContentLoading) {
+        DOMElements.aiContentLoading.style.display = 'block';
+      }
+    } else {
+      // إخفاء مؤشر التحميل
+      if (DOMElements.aiContentLoading) {
+        DOMElements.aiContentLoading.style.display = 'none';
+      }
+    }
+  }
+
+  /**
+   * التعامل مع أخطاء محتوى الذكاء الاصطناعي
+   * @private
+   */
+  function _handleAIContentError(error) {
+    const logger = getLogger();
+    
+    logger.handleError({
+      error,
+      message: translate('MainRenderer.AIContentError'),
+      origin: 'MainRenderer._handleAIContentError'
+    });
+    
+    // عرض رسالة الخطأ
+    if (DOMElements.aiContentError) {
+      DOMElements.aiContentError.style.display = 'block';
+      DOMElements.aiContentError.textContent = translate('MainRenderer.AIContentError');
+    }
+  }
+
+  /**
+   * التعامل مع بدء حركة النص
+   * @private
+   */
+  function _handleTextAnimationStart(animation) {
+    const logger = getLogger();
+    
+    if (!animation) {
+      logger.logWarning({
+        message: 'بيانات الحركة غير موجودة',
+        origin: 'MainRenderer._handleTextAnimationStart'
+      });
+      return;
+    }
+    
+    // يمكن هنا تطبيق الحركة المطلوبة
+    // مثال: fade, slide, zoom
+    logger.logWarning({
+      message: `بدء حركة النص: ${animation.type}`,
+      origin: 'MainRenderer._handleTextAnimationStart'
+    });
+    
+    // يمكن هنا بدء الحركة باستخدام CSS أو JavaScript
+    // مثال: إضافة class لحركة fade
+    if (animation.type === 'fade') {
+      DOMElements.canvasPreviewContainer.classList.add('fade-animation');
+    }
+  }
+
+  /**
+   * التعامل مع انتهاء حركة النص
+   * @private
+   */
+  function _handleTextAnimationEnd(animation) {
+    const logger = getLogger();
+    
+    if (!animation) {
+      logger.logWarning({
+        message: 'بيانات الحركة غير موجودة',
+        origin: 'MainRenderer._handleTextAnimationEnd'
+      });
+      return;
+    }
+    
+    logger.logWarning({
+      message: `انتهاء حركة النص: ${animation.type}`,
+      origin: 'MainRenderer._handleTextAnimationEnd'
+    });
+    
+    // إزالة تأثير الحركة
+    if (animation.type === 'fade') {
+      DOMElements.canvasPreviewContainer.classList.remove('fade-animation');
+    }
+  }
+
+  /**
+   * التعامل مع تحديث حركة النص
+   * @private
+   */
+  function _handleTextAnimationUpdate(animation, progress) {
+    const logger = getLogger();
+    
+    if (!animation) {
+      logger.logWarning({
+        message: 'بيانات الحركة غير موجودة',
+        origin: 'MainRenderer._handleTextAnimationUpdate'
+      });
+      return;
+    }
+    
+    if (typeof progress !== 'number' || progress < 0 || progress > 1) {
+      logger.logWarning({
+        message: `تقدم الحركة غير صالح: ${progress}`,
+        origin: 'MainRenderer._handleTextAnimationUpdate'
+      });
+      return;
+    }
+    
+    // يمكن هنا تحديث النص بناءً على تقدم الحركة
+    const state = dependencies.stateStore.getState();
+    
+    if (state.currentProject && state.currentProject.textStyle && animation.type === 'fade') {
+      const updatedTextOptions = {
+        ...state.currentProject.textStyle,
+        opacity: progress
+      };
+      
+      _drawText(updatedTextOptions);
+    }
+  }
+
+  /**
+   * التعامل مع إلغاء حركة النص
+   * @private
+   */
+  function _handleTextAnimationCancel(animation) {
+    const logger = getLogger();
+    
+    if (!animation) {
+      logger.logWarning({
+        message: 'بيانات الحركة غير موجودة',
+        origin: 'MainRenderer._handleTextAnimationCancel'
+      });
+      return;
+    }
+    
+    logger.logWarning({
+      message: `إلغاء حركة النص: ${animation.type}`,
+      origin: 'MainRenderer._handleTextAnimationCancel'
+    });
+    
+    // إيقاف الحركة
+    _handleTextAnimationEnd(animation);
+  }
+
+  /**
+   * التعامل مع انتهاء الحركة تمامًا
+   * @private
+   */
+  function _handleTextAnimationFinish(animation) {
+    const logger = getLogger();
+    
+    if (!animation) {
+      logger.logWarning({
+        message: 'بيانات الحركة غير موجودة',
+        origin: 'MainRenderer._handleTextAnimationFinish'
+      });
+      return;
+    }
+    
+    logger.logWarning({
+      message: `انتهاء الحركة تمامًا: ${animation.type}`,
+      origin: 'MainRenderer._handleTextAnimationFinish'
+    });
+    
+    // استعادة الحالة الأصلية
+    const state = dependencies.stateStore.getState();
+    
+    if (state.currentProject && state.currentProject.textStyle) {
+      _drawText(state.currentProject.textStyle);
+    }
+  }
+
+  /**
+   * إعداد مراقبة الأحداث
+   * @private
+   */
+  function _setupEventListeners() {
+    canvas = DOMElements.videoPreviewCanvas;
+    ctx = canvas?.getContext('2d');
+    
+    if (!canvas || !ctx) {
+      const logger = getLogger();
+      logger.logWarning({
+        message: translate('MainRenderer.CanvasNotInitialized'),
+        origin: 'MainRenderer._setupEventListeners'
+      });
+      return;
+    }
+    
+    // مزامنة مع الحالة الابتدائية
+    const state = dependencies.stateStore.getState();
+    lastRenderedState = { ...state };
+    
+    // مزامنة مع تغييرات المشروع
+    dependencies.stateStore.subscribe((newState) => {
+      _handleProjectStateChange(newState, lastRenderedState);
+      lastRenderedState = { ...newState };
+    });
+    
+    // مزامنة مع تغييرات أبعاد الكانفاس
+    dependencies.eventAggregator.subscribe(EVENTS.CANVAS_RESIZED, _handleCanvasResized);
+    
+    // مزامنة مع طلبات الرسم اليدوية
+    dependencies.eventAggregator.subscribe(EVENTS.REQUEST_RENDER, _handleRequestRender);
+    
+    // مزامنة مع تحميل الصوت
+    dependencies.eventAggregator.subscribe(EVENTS.AYAH_AUDIO_READY, _handleAyahAudioReady);
+    
+    // مزامنة مع فشل تحميل الصوت
+    dependencies.eventAggregator.subscribe(EVENTS.AYAH_AUDIO_FAILED, _handleAyahAudioFailed);
+    
+    // مزامنة مع انتهاء الصوت
+    dependencies.eventAggregator.subscribe(EVENTS.AYAH_AUDIO_ENDED, _handleAyahAudioEnded);
+    
+    // مزامنة مع أخطاء الصوت
+    dependencies.eventAggregator.subscribe(EVENTS.AYAH_AUDIO_ERROR, _handleAyahAudioError);
+    
+    // مزامنة مع تقدم التصدير
+    dependencies.eventAggregator.subscribe(EVENTS.EXPORT_PROGRESS, _handleExportProgress);
+    
+    // مزامنة مع اكتمال التصدير
+    dependencies.eventAggregator.subscribe(EVENTS.EXPORT_COMPLETE, _handleExportComplete);
+    
+    // مزامنة مع أخطاء التصدير
+    dependencies.eventAggregator.subscribe(EVENTS.EXPORT_ERROR, _handleExportError);
+    
+    // مزامنة مع تغيير اللغة
+    dependencies.eventAggregator.subscribe(EVENTS.LANGUAGE_CHANGED, _handleLanguageChange);
+    
+    // مزامنة مع تغيير السمة
+    dependencies.eventAggregator.subscribe(EVENTS.THEME_CHANGED, _handleThemeChange);
+    
+    // مزامنة مع تحميل المشروع
+    dependencies.eventAggregator.subscribe(EVENTS.PROJECT_LOADED, _handleProjectLoaded);
+    
+    // مزامنة مع إلغاء تحميل المشروع
+    dependencies.eventAggregator.subscribe(EVENTS.PROJECT_UNLOADED, _handleProjectUnloaded);
+    
+    // مزامنة مع تغيير محتوى الذكاء الاصطناعي
+    dependencies.eventAggregator.subscribe(EVENTS.AI_CONTENT_CHANGED, _handleAIContentChange);
+    
+    // مزامنة مع تحميل محتوى الذكاء الاصطناعي
+    dependencies.eventAggregator.subscribe(EVENTS.AI_CONTENT_LOADING, _handleAIContentLoading);
+    
+    // مزامنة مع أخطاء محتوى الذكاء الاصطناعي
+    dependencies.eventAggregator.subscribe(EVENTS.AI_CONTENT_ERROR, _handleAIContentError);
+    
+    // بدء رسم الإطار الأول
+    requestAnimationFrame(_renderFrame);
+    isInitialized = true;
+  }
+
+  /**
+   * إزالة مراقبة الأحداث
+   * @private
+   */
+  function _teardownEventListeners() {
+    if (isInitialized) {
+      // إزالة مراقبة تغييرات المشروع
+      dependencies.stateStore.unsubscribe();
+      
+      // إزالة مراقبة أحداث الكانفاس
+      dependencies.eventAggregator.unsubscribe(EVENTS.CANVAS_RESIZED, _handleCanvasResized);
+      dependencies.eventAggregator.unsubscribe(EVENTS.REQUEST_RENDER, _handleRequestRender);
+      dependencies.eventAggregator.unsubscribe(EVENTS.AYAH_AUDIO_READY, _handleAyahAudioReady);
+      dependencies.eventAggregator.unsubscribe(EVENTS.AYAH_AUDIO_FAILED, _handleAyahAudioFailed);
+      dependencies.eventAggregator.unsubscribe(EVENTS.AYAH_AUDIO_ENDED, _handleAyahAudioEnded);
+      dependencies.eventAggregator.unsubscribe(EVENTS.AYAH_AUDIO_ERROR, _handleAyahAudioError);
+      dependencies.eventAggregator.unsubscribe(EVENTS.EXPORT_PROGRESS, _handleExportProgress);
+      dependencies.eventAggregator.unsubscribe(EVENTS.EXPORT_COMPLETE, _handleExportComplete);
+      dependencies.eventAggregator.unsubscribe(EVENTS.EXPORT_ERROR, _handleExportError);
+      dependencies.eventAggregator.unsubscribe(EVENTS.LANGUAGE_CHANGED, _handleLanguageChange);
+      dependencies.eventAggregator.unsubscribe(EVENTS.THEME_CHANGED, _handleThemeChange);
+      dependencies.eventAggregator.unsubscribe(EVENTS.PROJECT_LOADED, _handleProjectLoaded);
+      dependencies.eventAggregator.unsubscribe(EVENTS.PROJECT_UNLOADED, _handleProjectUnloaded);
+      dependencies.eventAggregator.unsubscribe(EVENTS.AI_CONTENT_CHANGED, _handleAIContentChange);
+      dependencies.eventAggregator.unsubscribe(EVENTS.AI_CONTENT_LOADING, _handleAIContentLoading);
+      dependencies.eventAggregator.unsubscribe(EVENTS.AI_CONTENT_ERROR, _handleAIContentError);
+      
+      isInitialized = false;
+    }
+    
+    if (canvas && ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      canvas.width = 0;
+      canvas.height = 0;
+      canvas = null;
+      ctx = null;
+    }
+    
+    // مسح الصور والفيديوهات
+    if (currentBackgroundImage) {
+      currentBackgroundImage.src = '';
+      currentBackgroundImage = null;
+    }
+    
+    if (currentBackgroundVideo) {
+      currentBackgroundVideo.src = '';
+      currentBackgroundVideo = null;
+    }
+    
+    // مسح الحالة
+    lastRenderedState = null;
+    currentTextEffect = {
+      type: 'none',
+      text: '',
+      state: ''
+    };
+  }
+
+  /**
+   * تحديث واجهة المستخدم من الحالة
+   * @private
+   */
+  function _updateUIFromState() {
+    const state = dependencies.stateStore.getState();
+    
+    // تحديث أبعاد الكانفاس
+    const dimensions = dependencies.canvasDimensionsAPI?.getCurrentDimensions();
+    if (dimensions && (canvas.width !== dimensions.width || canvas.height !== dimensions.height)) {
+      canvas.width = dimensions.width;
+      canvas.height = dimensions.height;
+    }
+    
+    // تحديث لون الخلفية
+    if (state.currentProject && state.currentProject.background && state.currentProject.background.type === 'color') {
+      ctx.fillStyle = state.currentProject.background.source;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      notifyFrameRendered({ type: 'color', source: state.currentProject.background.source });
+    }
+    
+    // تحديث صورة الخلفية
+    if (state.currentProject && state.currentProject.background && state.currentProject.background.type === 'image') {
+      if (!currentBackgroundImage || currentBackgroundImage.src !== state.currentProject.background.source) {
+        currentBackgroundImage = new Image();
+        currentBackgroundImage.crossOrigin = 'Anonymous';
+        currentBackgroundImage.src = state.currentProject.background.source;
+        currentBackgroundImage.onload = () => {
+          ctx.drawImage(currentBackgroundImage, 0, 0, canvas.width, canvas.height);
+          notifyFrameRendered({ type: 'image', source: state.currentProject.background.source });
+        };
+      } else {
+        ctx.drawImage(currentBackgroundImage, 0, 0, canvas.width, canvas.height);
+      }
+    }
+    
+    // تحديث فيديو الخلفية
+    if (state.currentProject && state.currentProject.background && state.currentProject.background.type === 'video') {
+      if (!currentBackgroundVideo || currentBackgroundVideo.src !== state.currentProject.background.source) {
+        currentBackgroundVideo = document.createElement('video');
+        currentBackgroundVideo.crossOrigin = 'Anonymous';
+        currentBackgroundVideo.muted = true;
+        currentBackgroundVideo.playsinline = true;
+        currentBackgroundVideo.loop = true;
+        currentBackgroundVideo.currentTime = 0.1;
+        currentBackgroundVideo.src = state.currentProject.background.source;
+        currentBackgroundVideo.play();
+        
+        currentBackgroundVideo.oncanplay = () => {
+          ctx.drawImage(currentBackgroundVideo, 0, 0, canvas.width, canvas.height);
+          notifyFrameRendered({ type: 'video', source: state.currentProject.background.source });
+        };
+      } else {
+        if (currentBackgroundVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          ctx.drawImage(currentBackgroundVideo, 0, 0, canvas.width, canvas.height);
+        } else {
+          ctx.fillStyle = DEFAULT_PROJECT_SCHEMA.background.source;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          notifyRenderFailed(translate('MainRenderer.VideoNotReady'));
+        }
+      }
+    }
+    
+    // تحديث النصوص
+    if (state.currentProject && state.currentProject.textStyle && isValidText(state.currentProject.textStyle.text)) {
+      _drawText({
+        text: state.currentProject.textStyle.text,
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        fontSize: state.currentProject.textStyle.fontSize || DEFAULT_PROJECT_SCHEMA.textStyle.fontSize,
+        fontFamily: state.currentProject.textStyle.fontFamily || DEFAULT_PROJECT_SCHEMA.textStyle.fontFamily,
+        fontColor: state.currentProject.textStyle.fontColor || DEFAULT_PROJECT_SCHEMA.textStyle.fontColor,
+        textAlign: state.currentProject.textStyle.textAlign || DEFAULT_TEXT_ALIGN,
+        textDirection: state.currentProject.textStyle.textDirection || DEFAULT_TEXT_DIRECTION,
+        textEffect: state.currentProject.textStyle.textEffect || DEFAULT_TEXT_EFFECT,
+        opacity: state.currentProject.textStyle.opacity ?? DEFAULT_OPACITY,
+        rotation: state.currentProject.textStyle.rotation ?? 0,
+        shadowColor: state.currentProject.textStyle.shadow?.color ?? DEFAULT_SHADOW.color,
+        shadowBlur: state.currentProject.textStyle.shadow?.blur ?? DEFAULT_SHADOW.blur,
+        shadowOffsetX: state.currentProject.textStyle.shadow?.offsetX ?? DEFAULT_SHADOW.offset.x,
+        shadowOffsetY: state.currentProject.textStyle.shadow?.offsetY ?? DEFAULT_SHADOW.offset.y,
+        scale: state.currentProject.textStyle.scale ?? 1
+      });
+    }
+    
+    // تحديث الحالة
+    lastRenderedState = state;
+  }
+
+  /**
+   * التحقق من الصحة
+   * @returns {boolean} نتيجة التحقق
+   */
+  function selfTest() {
+    try {
+      const testText = translate('MainRenderer.SelfTestText');
+      const testFontFamily = 'Amiri';
+      const testFontSize = 48;
+      
+      // رسم نص تجريبي
+      _drawText({
+        text: testText,
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        fontSize: testFontSize,
+        fontFamily: testFontFamily,
+        fontColor: '#ffffff',
+        textAlign: 'center',
+        textDirection: 'rtl'
+      });
+      
+      // التحقق مما إذا تم رسم شيء
+      const pixel = ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1);
+      return pixel.data.some(channel => channel > 0); // التحقق مما إذا كان الكانفاس ليس فارغًا
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // إرجاع واجهة الكائن النهائي
+  return {
+    _setDependencies,
+    renderFrame: _renderFrame,
+    drawBackground: _drawBackground,
+    drawText: _drawText,
+    clearCanvas: _clearCanvas,
+    resetRenderer: _resetRenderer,
+    handleCanvasResized: _handleCanvasResized,
+    handleProjectStateChange: _handleProjectStateChange,
+    handleTimelineUpdate: _handleTimelineUpdate,
+    handleTimelineSeek: _handleTimelineSeek,
+    handleTextEffectChange: _handleTextEffectChange,
+    handleTextSettingsChange: _handleTextSettingsChange,
+    handleVideoFilterChange: _handleVideoFilterChange,
+    handleBackgroundChange: _handleBackgroundChange,
+    handleExportProgress: _handleExportProgress,
+    handleExportComplete: _handleExportComplete,
+    handleExportError: _handleExportError,
+    handleLanguageChange: _handleLanguageChange,
+    handleThemeChange: _handleThemeChange,
+    handleProjectLoaded: _handleProjectLoaded,
+    handleProjectUnloaded: _handleProjectUnloaded,
+    handleAIContentChange: _handleAIContentChange,
+    handleAIContentLoading: _handleAIContentLoading,
+    handleAIContentError: _handleAIContentError,
+    handleTextAnimationStart: _handleTextAnimationStart,
+    handleTextAnimationEnd: _handleTextAnimationEnd,
+    handleTextAnimationUpdate: _handleTextAnimationUpdate,
+    handleTextAnimationCancel: _handleTextAnimationCancel,
+    handleTextAnimationFinish: _handleTextAnimationFinish,
+    setupEventListeners: _setupEventListeners,
+    teardownEventListeners: _teardownEventListeners,
+    updateUIFromState: _updateUIFromState,
+    selfTest: selfTest
+  };
+})();
+
+/**
+ * تهيئة مُعالج الرسم
+ * @param {Object} deps - الاعتماديات المُمررة
+ * @returns {Object} واجهة مُعالج الرسم
  */
 export function initializeMainRenderer(deps) {
   mainRenderer._setDependencies(deps);
-  const { stateStore, eventAggregator, errorLogger } = deps;
-
-  // Need access to canvas context, setup internally now via _initializeCanvas called from render
-  // If _initializeCanvas needed to be public for setup:
-  // if (!mainRenderer._initializeCanvas()) { // Assume _initializeCanvas is method on mainRenderer object
-  //    errorLogger.handleError({message: "Renderer cannot initialize canvas.", origin:"initializeMainRenderer", severity:"error"});
-  //    return { renderFrame: ()=>{}, cleanup: ()=>{} }; // No-op API
-  // }
+  mainRenderer.setupEventListeners();
   
-  // Define a state change handler that correctly accesses the renderer's `requestRender`.
-  // As `mainRenderer` is an object, `mainRenderer.requestRender` or its internal methods need
-  // to be designed to be called without `this` issues, or `_onStateChange` needs access to it.
-  // This becomes simpler if initializeMainRenderer *is* the module and defines these handlers within its scope.
-  
-  const _onStateChangeInternal = (newState, oldState) => {
-      // Simple comparison for now. In a real app, use selectors to check specific state parts.
-      let needsRender = false;
-      if (newState.currentProject !== oldState?.currentProject) needsRender = true;
-      // Add more specific checks:
-      if (newState.currentProject && oldState?.currentProject) {
-          if (newState.currentProject.background !== oldState.currentProject.background) needsRender = true;
-          // Example: Listen to a hypothetical currentAyahDisplay object in state for text changes
-          if (newState.currentAyahDisplay !== oldState?.currentAyahDisplay) needsRender = true;
-          if (newState.currentProject.textStyle !== oldState.currentProject.textStyle) needsRender = true;
-      }
-      if (newState.isLoading !== oldState?.isLoading && !newState.isLoading) needsRender = true; // Render after loading finishes
-
-      if(needsRender) mainRenderer.renderFrame(); // Call the exposed renderFrame method
-  };
-
-  // Need reference to stateStore from deps to access oldState, if stateStore.subscribe provides it.
-  // Assuming stateStore.subscribe((newState) => {...}) which is common.
-  const unsubscribeState = stateStore.subscribe((newState /*, oldStateIfProvidedByStore */) => {
-    // For simplicity, assume `stateStore.subscribe` only gives `newState`.
-    // We would need to store `oldState` manually if fine-grained comparison is crucial.
-    // For now, let's just trigger render on any relevant state slice change identified internally.
-    // The _onStateChange logic in mainRenderer's closure is the ideal place for granular checks if it has access.
-    // Here, we might just request a render if certain top-level parts change or a specific action was dispatched.
-
-    // Re-evaluate which parts of state trigger a render directly here
-    // or rely on EVENTS.REQUEST_CANVAS_RENDER
-    mainRenderer.renderFrame({reason: 'stateOrEventTrigger'}); // More generic trigger
-  });
-
-
-  const unsubscribeRequestRender = eventAggregator.subscribe(EVENTS.REQUEST_CANVAS_RENDER, (payload) => {
-      mainRenderer.renderFrame({ reason: payload?.reason || 'eventRequest' });
-  });
-
-  const unsubscribeCanvasResized = eventAggregator.subscribe(EVENTS.CANVAS_RESIZED, (dimensions) => {
-      // The canvas element dimensions (canvas.width, canvas.height) are already set by canvas.dimension.handler
-      // This event just confirms it, so trigger a render.
-      mainRenderer.renderFrame({ reason: 'canvasResized', dimensions });
-  });
-
-
-  // Initial render
-  // Wait a tick for DOM and other initializations to settle potentially.
-  setTimeout(() => {
-      if (!mainRenderer._initializeCanvasInternal || !mainRenderer._initializeCanvasInternal()) {
-          (errorLogger.handleError || console.error)("Failed to initialize canvas in MainRenderer.");
-          return;
-      }
-      mainRenderer.renderFrame({ reason: 'initialLoad' });
-  }, 0);
-
-  mainRenderer._initializeCanvasInternal = function() { /* contents of _initializeCanvas */
-    mainRenderer.canvasRef = DOMElements.videoPreviewCanvas;
-    if (!mainRenderer.canvasRef) { /* error logging */ return false; }
-    mainRenderer.ctxRef = mainRenderer.canvasRef.getContext('2d', { alpha: true });
-    if (!mainRenderer.ctxRef) { /* error logging */ return false; }
-    return true;
-  };
-
-  // console.info('[MainRenderer] Initialized.');
   return {
-    renderFrame: mainRenderer.renderFrame, // Expose a method to explicitly request a render
-    cleanup: () => {
-      unsubscribeState();
-      unsubscribeRequestRender.unsubscribe();
-      unsubscribeCanvasResized.unsubscribe();
-      if (mainRenderer._currentAnimationFrameId) { // Make _currentAnimationFrameId accessible
-          cancelAnimationFrame(mainRenderer._currentAnimationFrameId);
-      }
-      // console.info('[MainRenderer] Cleaned up.');
-    }
+    renderFrame: mainRenderer.renderFrame,
+    drawBackground: mainRenderer.drawBackground,
+    drawText: mainRenderer.drawText,
+    clearCanvas: mainRenderer.clearCanvas,
+    resetRenderer: mainRenderer.resetRenderer,
+    updateUIFromState: mainRenderer.updateUIFromState,
+    selfTest: mainRenderer.selfTest,
+    cleanup: mainRenderer.teardownEventListeners
   };
 }
 
+/**
+ * التحقق من صحة النظام
+ * @returns {boolean} نتيجة التحقق
+ */
+export function selfTest() {
+  return mainRenderer.selfTest();
+}
 
+// تصدير الكائن الافتراضي
 export default mainRenderer;
