@@ -74,121 +74,16 @@ export function escapeHtml(unsafeStr) {
   if (unsafeStr === null || unsafeStr === undefined) return '';
   if (typeof unsafeStr !== 'string') unsafeStr = String(unsafeStr);
 
-return unsafeStr
-  .replace(/&/g, "&")
-  .replace(/</g, "<")
-  .replace(/>/g, ">")
-  .replace(/"/g, "")
-  .replace(/'/g, "");
+  return unsafeStr
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // هنا يبدأ توثيق الدالة الجديدة أو أي شرح آخر خارج الجسم
 /**
  * Unescapes HTML entities back to their characters.
- * @param {string} safeStr - The string with HTML entities.
- * @returns {string} The unescaped string.
+ * يمكنك إضافة دوال أخرى هنا حسب الحاجة.
  */
-export function unescapeHtml(safeStr) {
-  if (safeStr === null || safeStr === undefined) return '';
-  if (typeof safeStr !== 'string') safeStr = String(safeStr);
-  
-  // Create a temporary textarea element to leverage browser's decoding
-  const textarea = document.createElement('textarea');
-  textarea.innerHTML = safeStr;
-  return textarea.value;
-  // Alternative manual replacement (less comprehensive):
-  // return safeStr
-  //   .replace(/</g, "<")
-  //   .replace(/>/g, ">")
-  //   .replace(/"/g, "\"")
-  //   .replace(/'/g, "'") // Or /'/g
-  //   .replace(/&/g, "&");
-}
-
-
-/**
- * Generates a random string of a specified length.
- * @param {number} length - The desired length of the random string.
- * @param {string} [characters='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'] -
- *                          The set of characters to choose from.
- * @returns {string} The generated random string.
- */
-export function generateRandomString(length, characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') {
-  if (typeof length !== 'number' || length <= 0) {
-    return '';
-  }
-  let result = '';
-  const charactersLength = characters.length;
-  for (let i = 0; i < length; i++) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength));
-  }
-  return result;
-}
-
-/**
- * Simple string template formatter. Replaces {key} with data[key].
- * Example: formatString("Hello {name}!", { name: "World" }) -> "Hello World!"
- * @param {string} template - The template string with placeholders.
- * @param {Record<string, string | number | boolean>} data - An object with key-value pairs for replacements.
- * @returns {string} The formatted string.
- */
-export function formatString(template, data) {
-  if (!template || typeof template !== 'string') return '';
-  if (!data || typeof data !== 'object') return template; // Return template if no data
-
-  return template.replace(/{([^{}]+)}/g, (match, key) => {
-    // key will be the string inside {}.
-    // Using `Object.prototype.hasOwnProperty.call` for safer property check.
-    return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : match;
-  });
-}
-
-/**
- * Converts a string into a URL-friendly "slug".
- * Replaces spaces with hyphens, converts to lowercase, and removes non-alphanumeric characters (except hyphens).
- * @param {string} str - The input string.
- * @returns {string} The slugified string.
- */
-export function slugify(str) {
-  if (!str || typeof str !== 'string') {
-    return '';
-  }
-  return str
-    .toString()
-    .normalize('NFKD') // Normalize special characters (e.g., accented chars)
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-') // Replace spaces with -
-    .replace(/[^\w-]+/g, '') // Remove all non-word chars except hyphens
-    .replace(/--+/g, '-'); // Replace multiple - with single -
-}
-
-/**
- * Checks if a string is null, undefined, or consists only of whitespace.
- * @param {string | null | undefined} str - The string to check.
- * @returns {boolean} True if the string is blank, false otherwise.
- */
-export function isBlank(str) {
-    return (!str || typeof str !== 'string' || str.trim().length === 0);
-}
-
-/**
- * Checks if a string contains another substring (case-insensitive by default).
- * @param {string} mainString - The string to search within.
- * @param {string} subString - The substring to search for.
- * @param {boolean} [caseSensitive=false] - Whether the search should be case-sensitive.
- * @returns {boolean} True if subString is found in mainString.
- */
-export function contains(mainString, subString, caseSensitive = false) {
-    if (isBlank(mainString) || isBlank(subString)) {
-        return false;
-    }
-    if (caseSensitive) {
-        return mainString.includes(subString);
-    }
-    return mainString.toLowerCase().includes(subString.toLowerCase());
-}
-
-
-// This module exports utility functions directly. No complex initialization needed.
-// No `initialize...` function needed from moduleBootstrap for this type of utility module.
