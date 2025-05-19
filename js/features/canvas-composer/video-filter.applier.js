@@ -1,11 +1,31 @@
 // js/features/canvas-composer/video-filter.applier.js
 
 import DOMElements from '../../core/dom-elements.js';
-import { ACTIONS, DEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js'; // For state updates & defaults
-// import dynamicSelectBuilder from '../../shared-ui-components/dynamic-select.builder.js'; // If using it to populate select
+import { ACTIONS, DEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js';
 
-// Define supported video filters and their CSS filter values
-// This could also be part of app.constants.js or a dedicated config file
+/**
+ * @constant {object} SUPPORTED_VIDEO_FILTERS
+ * @description قاموس يحتوي على الفلاتر المدعومة وأسماءها وقيم CSS الخاصة بها.
+ * الأسماء هنا باللغة العربية لدعم الواجهة.
+ * @property {object} none - فلتر "بدون فلتر".
+ * @property {object} grayscale - فلتر "رمادي".
+ * @property {object} sepia - فلتر "بني داكن (سيبيا)".
+ * @property {object} brightness_high - فلتر "سطوع عالي".
+ * @property {object} brightness_low - فلتر "سطوع منخفض".
+ * @property {object} contrast_high - فلتر "تباين عالي".
+ * @property {object} contrast_low - فلتر "تباين منخفض".
+ * @property {object} blur - فلتر "ضبابي (خفيف)" - (استخدم بحذر، قد يكون بطيئًا).
+ * @property {object} invert - فلتر "عكس الألوان".
+ * @property {object} saturate_high - فلتر "تشبع لوني عالي".
+ * @property {object} saturate_low - فلتر "تشبع لوني منخفض".
+ * @property {object} hue_rotate_90 - فلتر "تدوير الصبغة (90°)".
+ * @example
+ * // {
+ * //   none: { name: 'بدون فلتر', value: 'none' },
+ * //   grayscale: { name: 'رمادي', value: 'grayscale(100%)' },
+ * //   // ... المزيد من الفلاتر
+ * // }
+ */
 export const SUPPORTED_VIDEO_FILTERS = {
   none: { name: 'بدون فلتر', value: 'none' },
   grayscale: { name: 'رمادي', value: 'grayscale(100%)' },
@@ -14,242 +34,335 @@ export const SUPPORTED_VIDEO_FILTERS = {
   brightness_low: { name: 'سطوع منخفض', value: 'brightness(0.7)' },
   contrast_high: { name: 'تباين عالي', value: 'contrast(1.8)' },
   contrast_low: { name: 'تباين منخفض', value: 'contrast(0.6)' },
-  blur: { name: 'ضبابي (خفيف)', value: 'blur(2px)' }, // Use sparingly, can be slow
+  blur: { name: 'ضبابي (خفيف)', value: 'blur(2px)' },
   invert: { name: 'عكس الألوان', value: 'invert(100%)' },
   saturate_high: { name: 'تشبع لوني عالي', value: 'saturate(2)' },
   saturate_low: { name: 'تشبع لوني منخفض', value: 'saturate(0.3)' },
   hue_rotate_90: { name: 'تدوير الصبغة (90°)', value: 'hue-rotate(90deg)' },
-  // Add more complex or combined filters as needed
+  // يمكنك إضافة فلاتر مركبة هنا إذا أردت:
   // 'old_film': { name: 'فيلم قديم', value: 'sepia(0.7) contrast(1.2) brightness(0.9) saturate(0.8)'},
 };
 
-
-const videoFilterApplier = (() => {
-  let canvasElement = null; // DOMElements.videoPreviewCanvas
-  let filterSelectElement = null; // DOMElements.videoFilterSelect
-
-  let dependencies = {
-    stateStore: {
-      getState: () => ({ currentProject: null }),
-      dispatch: () => {},
-      subscribe: () => (() => {})
-    },
-    errorLogger: console,
-    // localizationService: { translate: key => key } // For filter names
-  };
-
-  /**
-   * Applies the specified CSS filter string to the canvas element.
-   * @private
-   * @param {string} filterValue - The CSS filter string (e.g., "grayscale(100%)", "none").
-   */
-  function _applyFilterToCanvas(filterValue) {
-    if (canvasElement) {
-      canvasElement.style.filter = filterValue || 'none';
-      // console.debug(`[VideoFilterApplier] Applied filter: ${filterValue}`);
-    }
-  }
-
-  /**
-   * Handles changes from the video filter select dropdown.
-   * Dispatches an action to update the state store.
-   * @private
-   */
-  function _handleFilterSelectionChange() {
-    if (filterSelectElement) {
-      const selectedFilterKey = filterSelectElement.value;
-      const filterConfig = SUPPORTED_VIDEO_FILTERS[selectedFilterKey];
-
-      if (filterConfig) {
-        // console.debug(`[VideoFilterApplier] Filter selected: ${selectedFilterKey}`);
-        dependencies.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, {
-          videoComposition: {
-            videoFilter: selectedFilterKey // Store the key in state, not the full CSS value
-          }
-        });
-        // The stateStore subscription will trigger the actual application of the filter.
-      } else {
-        (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-            message: `Invalid video filter key selected: ${selectedFilterKey}`,
-            origin: 'VideoFilterApplier._handleFilterSelectionChange'
-        });
-      }
-    }
-  }
-
-  /**
-   * Populates the video filter select dropdown with available options.
-   * @private
-   */
-  function _populateFilterSelect() {
-    if (filterSelectElement) {
-        // Clear existing options before populating
-        while (filterSelectElement.options.length > 0) {
-            filterSelectElement.remove(0);
-        }
-
-        Object.keys(SUPPORTED_VIDEO_FILTERS).forEach(key => {
-            const option = document.createElement('option');
-            option.value = key;
-            // Assuming localizationService is injected for filter names
-            // option.textContent = dependencies.localizationService?.translate(`filter.${key}.name`) || SUPPORTED_VIDEO_FILTERS[key].name;
-            option.textContent = SUPPORTED_VIDEO_FILTERS[key].name; // Use direct name for now
-            filterSelectElement.appendChild(option);
-        });
-    }
-  }
-  
-  /**
-   * Updates the video filter select UI based on state.
-   * @private
-   * @param {string} filterKey - The key of the filter (e.g., 'grayscale').
-   */
-  function _updateFilterSelectUI(filterKey) {
-      if (filterSelectElement && filterSelectElement.value !== filterKey) {
-          if (SUPPORTED_VIDEO_FILTERS[filterKey]) {
-              filterSelectElement.value = filterKey;
-          } else { // Fallback if state has an invalid filter key
-              filterSelectElement.value = 'none';
-          }
-      }
-  }
-
-  function _setDependencies(injectedDeps) {
-    if (injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
-    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
-    // if (injectedDeps.localizationService) dependencies.localizationService = injectedDeps.localizationService;
-  }
-
-  // Public API (not much needed publicly usually for a UI controller like this)
-  return {
-    _setDependencies,
-    // applyFilter: (filterKey) => { /* Manual application if needed */ }
-  };
-
-})(); // IIFE Removed
-
-
 /**
- * Initialization function for the VideoFilterApplier.
- * @param {object} deps
- * @param {import('../../core/state-store.js').default} deps.stateStore
- * @param {import('../../core/error-logger.js').default} deps.errorLogger
- * // @param {import('../../core/localization.service.js').default} [deps.localizationService]
+ * @class VideoFilterApplier
+ * @description مسؤول عن تطبيق فلاتر الفيديو على عنصر الكانفاس وإدارة واجهة اختيار الفلاتر.
+ * يتكامل مع مخزن الحالة (StateStore) لتحديثات الفلاتر ويعتمد على حقن التبعيات.
  */
-export function initializeVideoFilterApplier(deps) {
-  videoFilterApplier._setDependencies(deps);
-  const { stateStore, errorLogger } = deps;
+class VideoFilterApplier {
+  /**
+   * @private
+   * @type {HTMLCanvasElement|null}
+   * @description مرجع لعنصر الكانفاس لمعاينة الفيديو.
+   */
+  #canvasElement = null;
 
-  videoFilterApplier.canvasRef = DOMElements.videoPreviewCanvas; // Cache DOM ref
-  videoFilterApplier.filterSelectRef = DOMElements.videoFilterSelect;
+  /**
+   * @private
+   * @type {HTMLSelectElement|null}
+   * @description مرجع لعنصر القائمة المنسدلة لاختيار الفلاتر.
+   */
+  #filterSelectElement = null;
 
-  if (!videoFilterApplier.canvasRef || !videoFilterApplier.filterSelectRef) {
-    (errorLogger.logWarning || console.warn).call(errorLogger, {
-        message: 'Canvas element or filter select element not found. Video filter functionality will be impaired.',
-        origin: 'initializeVideoFilterApplier'
-    });
-    return { cleanup: () => {} };
+  /**
+   * @private
+   * @type {import('../../core/state-store.js').default|null}
+   * @description مرجع لمخزن الحالة لإرسال التحديثات والاشتراك في التغييرات.
+   */
+  #stateStore = null;
+
+  /**
+   * @private
+   * @type {import('../../core/error-logger.js').default|Console}
+   * @description مرجع لمسجل الأخطاء أو `console` كبديل.
+   */
+  #errorLogger = console; // Default to console
+
+  /**
+   * @private
+   * @type {Function}
+   * @description دالة لإلغاء الاشتراك في تحديثات مخزن الحالة.
+   */
+  #unsubscribeState = () => {};
+
+  /**
+   * @constructor
+   * @param {object} dependencies - التبعيات المطلوبة للوحدة.
+   * @param {import('../../core/state-store.js').default} dependencies.stateStore - مخزن الحالة.
+   * @param {import('../../core/error-logger.js').default} [dependencies.errorLogger] - مسجل الأخطاء (اختياري، يستخدم console افتراضيًا).
+   * @throws {Error} إذا لم يتم العثور على عنصر الكانفاس أو قائمة اختيار الفلاتر.
+   */
+  constructor({ stateStore, errorLogger }) {
+    this.#canvasElement = DOMElements.videoPreviewCanvas;
+    this.#filterSelectElement = DOMElements.videoFilterSelect;
+
+    if (!this.#canvasElement || !this.#filterSelectElement) {
+      const message = 'VideoFilterApplier: Canvas element or filter select element not found. Functionality will be impaired.';
+      if (errorLogger && typeof errorLogger.logError === 'function') {
+        errorLogger.logError({ message, origin: 'VideoFilterApplier.constructor' });
+      } else {
+        console.error(message);
+      }
+      // لا يمكن المتابعة بدون العناصر الأساسية، يمكن إلقاء خطأ أو تعطيل الوحدة بهدوء.
+      // في هذه الحالة، سنسمح بإنشاء الكائن ولكن لن يعمل بشكل صحيح.
+      // يمكن للمستهلك التحقق من ذلك إذا لزم الأمر.
+      return;
+    }
+
+    this.#stateStore = stateStore;
+    if (errorLogger) {
+      this.#errorLogger = errorLogger;
+    }
+
+    this.#initialize();
   }
 
-  // --- Internal functions moved/re-scoped for this init pattern ---
-  const _applyFilterToCanvasDirect = (filterValue) => {
-    if (videoFilterApplier.canvasRef) {
-      videoFilterApplier.canvasRef.style.filter = filterValue || 'none';
-    }
-  };
-  
-  const _populateFilterSelectDirect = () => {
-    const selectEl = videoFilterApplier.filterSelectRef;
-    if (selectEl) {
-      while (selectEl.options.length > 0) { selectEl.remove(0); }
-      Object.keys(SUPPORTED_VIDEO_FILTERS).forEach(key => {
-        const option = document.createElement('option');
-        option.value = key;
-        option.textContent = SUPPORTED_VIDEO_FILTERS[key].name;
-        selectEl.appendChild(option);
-      });
-    }
-  };
-  _populateFilterSelectDirect(); // Populate on init
+  /**
+   * @private
+   * @description يقوم بتهيئة الوحدة: ملء قائمة الفلاتر، ربط المستمعين، الاشتراك في الحالة، وتطبيق الفلتر الأولي.
+   */
+  #initialize() {
+    if (!this.#canvasElement || !this.#filterSelectElement || !this.#stateStore) return;
 
-  const _updateFilterSelectUIDirect = (filterKey) => {
-    const selectEl = videoFilterApplier.filterSelectRef;
-    if (selectEl && selectEl.value !== filterKey) {
-      if (SUPPORTED_VIDEO_FILTERS[filterKey]) {
-        selectEl.value = filterKey;
-      } else {
-        selectEl.value = 'none';
-      }
-    }
-  };
-
-  const _handleFilterSelectionChangeDirect = () => {
-    const selectEl = videoFilterApplier.filterSelectRef;
-    if (selectEl) {
-      const selectedFilterKey = selectEl.value;
-      if (SUPPORTED_VIDEO_FILTERS[selectedFilterKey]) {
-        stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, {
-          videoComposition: { videoFilter: selectedFilterKey }
-        });
-      }
-    }
-  };
-  videoFilterApplier.filterSelectRef.addEventListener('change', _handleFilterSelectionChangeDirect);
-
-
-  // Subscribe to state changes
-  const unsubscribeState = stateStore.subscribe((newState) => {
-    const project = newState.currentProject;
-    let activeFilterKey = DEFAULT_PROJECT_SCHEMA.videoComposition.videoFilter; // Default
-    let filterValueToApply = 'none';
-
-    if (project && project.videoComposition && project.videoComposition.videoFilter) {
-      activeFilterKey = project.videoComposition.videoFilter;
-    }
+    this.#populateFilterSelect();
+    this.#filterSelectElement.addEventListener('change', this.#handleFilterSelectionChange.bind(this));
     
+    this.#unsubscribeState = this.#stateStore.subscribe(this.#handleStateUpdate.bind(this));
+
+    // تطبيق الفلتر الأولي بناءً على الحالة الحالية
+    const initialState = this.#stateStore.getState();
+    this.#handleStateUpdate(initialState, true); // 'true' للإشارة إلى أنه تحديث أولي
+
+    this.#logInfo('Initialized.');
+  }
+
+  /**
+   * @private
+   * @description يملأ القائمة المنسدلة لاختيار الفلاتر بالخيارات المتاحة.
+   * يتم تعيين اتجاه النص إلى 'rtl' لضمان العرض الصحيح للغة العربية.
+   */
+  #populateFilterSelect() {
+    if (!this.#filterSelectElement) return;
+
+    // مسح الخيارات الموجودة
+    this.#filterSelectElement.innerHTML = '';
+    this.#filterSelectElement.setAttribute('dir', 'rtl'); // دعم RTL
+
+    Object.entries(SUPPORTED_VIDEO_FILTERS).forEach(([key, filter]) => {
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = filter.name; // الأسماء بالفعل باللغة العربية
+      this.#filterSelectElement.appendChild(option);
+    });
+  }
+
+  /**
+   * @private
+   * @description يعالج تغيير اختيار الفلتر من القائمة المنسدلة.
+   * يرسل إجراءً لتحديث إعدادات المشروع في مخزن الحالة.
+   */
+  #handleFilterSelectionChange() {
+    if (!this.#filterSelectElement || !this.#stateStore) return;
+
+    const selectedFilterKey = this.#filterSelectElement.value;
+    if (SUPPORTED_VIDEO_FILTERS[selectedFilterKey]) {
+      this.#logDebug(`Filter selected: ${selectedFilterKey}`);
+      this.#stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, {
+        videoComposition: {
+          videoFilter: selectedFilterKey,
+        },
+      });
+    } else {
+      this.#logWarning(`Invalid video filter key selected: ${selectedFilterKey}`, '_handleFilterSelectionChange');
+    }
+  }
+
+  /**
+   * @private
+   * @param {object} newState - الحالة الجديدة من مخزن الحالة.
+   * @param {boolean} [isInitialCall=false] - هل هذا هو الاستدعاء الأولي عند التهيئة.
+   * @description يعالج تحديثات الحالة من مخزن الحالة.
+   * يطبق الفلتر المناسب على الكانفاس ويحدث واجهة المستخدم لقائمة اختيار الفلاتر.
+   */
+  #handleStateUpdate(newState, isInitialCall = false) {
+    if (!this.#canvasElement) return;
+
+    const project = newState?.currentProject;
+    let activeFilterKey = project?.videoComposition?.videoFilter || DEFAULT_PROJECT_SCHEMA.videoComposition.videoFilter;
+    
+    let filterValueToApply;
+
     if (SUPPORTED_VIDEO_FILTERS[activeFilterKey]) {
       filterValueToApply = SUPPORTED_VIDEO_FILTERS[activeFilterKey].value;
     } else {
-      // Fallback if stored filter key is somehow invalid
-      activeFilterKey = 'none'; // Correct the key to 'none'
+      if (!isInitialCall) { // لا تسجل تحذيرًا إذا كان المفتاح غير صالح أثناء التحميل الأولي من حالة قديمة
+          this.#logWarning(`Invalid videoFilter key "${activeFilterKey}" in state. Defaulting to 'none'.`, 'handleStateUpdate');
+      }
+      activeFilterKey = 'none'; // تصحيح المفتاح إلى 'none'
       filterValueToApply = SUPPORTED_VIDEO_FILTERS.none.value;
-      (errorLogger.logWarning || console.warn).call(errorLogger, {
-          message: `Invalid videoFilter key "${project?.videoComposition?.videoFilter}" found in state. Defaulting to 'none'.`,
-          origin: 'VideoFilterApplier.stateSubscription'
-      });
     }
     
-    _applyFilterToCanvasDirect(filterValueToApply);
-    _updateFilterSelectUIDirect(activeFilterKey); // Sync select dropdown
-  });
+    this.#applyFilterToCanvas(filterValueToApply);
+    this.#updateFilterSelectUI(activeFilterKey);
+  }
 
-  // Apply initial filter based on current state
-  const initialProject = stateStore.getState().currentProject;
-  const initialFilterKey = initialProject?.videoComposition?.videoFilter || DEFAULT_PROJECT_SCHEMA.videoComposition.videoFilter;
-  _applyFilterToCanvasDirect(SUPPORTED_VIDEO_FILTERS[initialFilterKey]?.value || 'none');
-  _updateFilterSelectUIDirect(initialFilterKey);
-
-
-  // console.info('[VideoFilterApplier] Initialized.');
-  return {
-    cleanup: () => {
-      unsubscribeState();
-      if (videoFilterApplier.filterSelectRef) {
-        videoFilterApplier.filterSelectRef.removeEventListener('change', _handleFilterSelectionChangeDirect);
-      }
-      // Reset filter on canvas if cleaning up module
-      if (videoFilterApplier.canvasRef) {
-        videoFilterApplier.canvasRef.style.filter = 'none';
-      }
-      // console.info('[VideoFilterApplier] Cleaned up.');
+  /**
+   * @private
+   * @param {string} filterValue - قيمة فلتر CSS المطلوب تطبيقها (مثال: "grayscale(100%)").
+   * @description يطبق فلتر CSS المحدد على عنصر الكانفاس.
+   */
+  #applyFilterToCanvas(filterValue) {
+    if (this.#canvasElement) {
+      this.#canvasElement.style.filter = filterValue || 'none';
+      // this.#logDebug(`Applied filter to canvas: ${filterValue}`); // يمكن تفعيله عند الحاجة
     }
-    // Expose methods if other modules need to programmatically apply filters:
-    // applyFilterByKey: (filterKey) => {
-    //   if (SUPPORTED_VIDEO_FILTERS[filterKey]) {
-    //      stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { videoComposition: { videoFilter: filterKey }});
-    //   }
-    // }
-  };
+  }
+
+  /**
+   * @private
+   * @param {string} filterKey - مفتاح الفلتر النشط حاليًا (مثال: 'grayscale').
+   * @description يحدث واجهة المستخدم لقائمة اختيار الفلاتر لتعكس الفلتر النشط.
+   */
+  #updateFilterSelectUI(filterKey) {
+    if (this.#filterSelectElement && this.#filterSelectElement.value !== filterKey) {
+      if (SUPPORTED_VIDEO_FILTERS[filterKey]) {
+        this.#filterSelectElement.value = filterKey;
+      } else {
+        // إذا كان المفتاح في الحالة غير صالح، ارجع إلى 'none'
+        this.#filterSelectElement.value = 'none';
+      }
+    }
+  }
+
+  /**
+   * @private
+   * @param {string} message - الرسالة المراد تسجيلها.
+   * @param {string} [origin='VideoFilterApplier'] - مصدر الرسالة.
+   * @description أداة مساعدة لتسجيل معلومات التصحيح.
+   */
+  #logDebug(message, origin = 'VideoFilterApplier') {
+    if (this.#errorLogger && typeof this.#errorLogger.logDebug === 'function') {
+      this.#errorLogger.logDebug({ message, origin });
+    } else if (process.env.NODE_ENV === 'development') { // تجنب console.debug في الإنتاج إذا لم يكن errorLogger مخصصًا
+      console.debug(`[${origin}] ${message}`);
+    }
+  }
+  
+  /**
+   * @private
+   * @param {string} message - الرسالة المراد تسجيلها.
+   * @param {string} [origin='VideoFilterApplier'] - مصدر الرسالة.
+   * @description أداة مساعدة لتسجيل معلومات عامة.
+   */
+  #logInfo(message, origin = 'VideoFilterApplier') {
+    if (this.#errorLogger && typeof this.#errorLogger.logInfo === 'function') {
+      this.#errorLogger.logInfo({ message, origin });
+    } else {
+      console.info(`[${origin}] ${message}`);
+    }
+  }
+
+  /**
+   * @private
+   * @param {string} message - الرسالة المراد تسجيلها.
+   * @param {string} [origin='VideoFilterApplier'] - مصدر الرسالة.
+   * @description أداة مساعدة لتسجيل التحذيرات.
+   */
+  #logWarning(message, origin = 'VideoFilterApplier') {
+    if (this.#errorLogger && typeof this.#errorLogger.logWarning === 'function') {
+      this.#errorLogger.logWarning({ message, origin });
+    } else {
+      console.warn(`[${origin}] ${message}`);
+    }
+  }
+
+  /**
+   * @public
+   * @description يقوم بتنظيف الموارد عند تدمير أو إيقاف الوحدة.
+   * يزيل مستمعي الأحداث، يلغي الاشتراك في مخزن الحالة، ويعيد تعيين فلتر الكانفاس.
+   */
+  destroy() {
+    this.#unsubscribeState();
+    if (this.#filterSelectElement) {
+      this.#filterSelectElement.removeEventListener('change', this.#handleFilterSelectionChange.bind(this));
+    }
+    if (this.#canvasElement) {
+      this.#canvasElement.style.filter = 'none'; // إعادة تعيين الفلتر
+    }
+    
+    // إزالة المراجع للمساعدة في جمع القمامة (Garbage Collection)
+    this.#canvasElement = null;
+    this.#filterSelectElement = null;
+    this.#stateStore = null;
+    // this.#errorLogger = null; // لا يتم تعيينه إلى null لأنه قد يكون console
+
+    this.#logInfo('Cleaned up and destroyed.');
+  }
+
+  /**
+   * @public
+   * @description يتيح تطبيق فلتر برمجيًا عن طريق مفتاحه.
+   * هذا مفيد إذا كانت وحدات أخرى تحتاج إلى تغيير الفلتر.
+   * @param {string} filterKey - مفتاح الفلتر المراد تطبيقه (من `SUPPORTED_VIDEO_FILTERS`).
+   */
+  applyFilterByKey(filterKey) {
+    if (!this.#stateStore) {
+        this.#logWarning('StateStore not available, cannot apply filter by key.', 'applyFilterByKey');
+        return;
+    }
+    if (SUPPORTED_VIDEO_FILTERS[filterKey]) {
+      this.#stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, {
+        videoComposition: { videoFilter: filterKey },
+      });
+    } else {
+      this.#logWarning(`Attempted to apply an unsupported filter key: ${filterKey}`, 'applyFilterByKey');
+    }
+  }
 }
 
-export default videoFilterApplier; // Export base object
+export default VideoFilterApplier;
+
+// ===================================================================================
+// مثال على كيفية استخدام هذا الكلاس في مكان آخر من المشروع (عادة في ملف التهيئة الرئيسي)
+// ===================================================================================
+/*
+import VideoFilterApplier from './features/canvas-composer/video-filter.applier.js';
+import stateStore from './core/state-store.js'; // افتراض وجوده
+import errorLogger from './core/error-logger.js'; // افتراض وجوده
+
+let videoFilterModuleInstance = null;
+
+export function initializeMainApplicationComponents() {
+  // ... تهيئة باقي مكونات التطبيق ...
+
+  try {
+    videoFilterModuleInstance = new VideoFilterApplier({
+      stateStore,
+      errorLogger,
+      // لا حاجة لتمرير DOMElements.videoPreviewCanvas و DOMElements.videoFilterSelect
+      // لأن الكلاس سيحصل عليها بنفسه من DOMElements
+    });
+  } catch (error) {
+    // يمكن تسجيل الخطأ هنا إذا كان الإنشاء نفسه يلقي خطأ (لكن التصميم الحالي لا يفعل)
+    console.error("Failed to initialize VideoFilterApplier:", error);
+  }
+
+  // ...
+}
+
+export function cleanupMainApplicationComponents() {
+  // ... تنظيف باقي المكونات ...
+  if (videoFilterModuleInstance) {
+    videoFilterModuleInstance.destroy();
+    videoFilterModuleInstance = null;
+  }
+}
+
+// في حالة وجود Hot Module Replacement (HMR) أو ما شابه:
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (videoFilterModuleInstance) {
+      videoFilterModuleInstance.destroy();
+    }
+  });
+}
+*/
