@@ -1,9 +1,18 @@
-حدث خطأ أثناء تنفيذ سكريبت Gemini:
-Gemini API Error: 404 {
+**رد البوت (OpenAI (خطأ)):**
+
+حدث خطأ مع Gemini، سيتم تجربة OpenAI...
+Gemini API Error: 404
+{
   "error": {
     "code": 404,
-    "message": "models/gemini-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+    "message": "models/gemini-pro is not found for API version v1, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
     "status": "NOT_FOUND"
   }
 }
 
+
+حدث خطأ أيضًا مع OpenAI:
+Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-proj-********************************************************************************************************************************************************4R4A. You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_api_key'}}
+
+**تحذيرات:**
+⚠️ قد يكون هناك أخطاء أو مشاكل في جزء من الكود. راجع التفاصيل في الأعلى.
