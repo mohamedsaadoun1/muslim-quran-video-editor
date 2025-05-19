@@ -1,6 +1,6 @@
 // js/features/background-controller/background-ai.connector.js
 
-import { ACTIONS, EVENTS } // From app.constants.js
+import { ACTIONS, EVENTS } from '../config/app.constants.js';
 // (assume pexelsApiClient is available globally if not injected, or needs specific import/injection setup)
 // import pexelsApiClient from '../../services/pexels.api.client.js';
 
