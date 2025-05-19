@@ -4,6 +4,11 @@ on:
   issues:
     types: [opened, edited]
 
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+
 jobs:
   ai-bot:
     runs-on: ubuntu-latest
@@ -15,21 +20,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m pip install --upgrade pip openai
+      - run: python -m pip install --upgrade pip requests
 
-      - name: Write AI Bot script
+      - name: Write AI Bot script (Gemini)
         run: |
           cat << 'EOF' > super_ai_bot.py
-          import os, openai, re, shutil
+          import os, re, shutil, requests, json
           from datetime import datetime
 
           try:
-              openai.api_key = os.environ["OPENAI_API_KEY"]
+              GEMINI_API_KEY = "AIzaSyAVwL9OTXKftTHXqatG2hV07MN4erWXoBc"
               issue_title = """${{ github.event.issue.title }}"""
               issue_body = """${{ github.event.issue.body }}"""
               user_input = issue_title + "\n" + issue_body
-              GH_USER = os.environ.get("GH_USER", "")
-              GH_OWNER = os.environ.get("GH_OWNER", "")
 
               SYSTEM_PROMPT = '''
               أنت سوبر بوت للبرمجة وإدارة المشاريع على GitHub
@@ -55,16 +58,27 @@ jobs:
               - بعد كل عملية، وضّح بالضبط ما تم وما هي الخطوات القادمة، ولو فيه مشاكل أو تحذيرات اذكرها.
               '''
 
-              resp = openai.chat.completions.create(
-                  model="gpt-4o",
-                  messages=[
-                      {"role": "system", "content": SYSTEM_PROMPT},
-                      {"role": "user", "content": user_input}
-                  ],
-                  max_tokens=4096,
-                  temperature=0.1
-              )
-              answer = resp.choices[0].message.content.strip()
+              endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+
+              headers = {"Content-Type": "application/json"}
+              payload = {
+                  "contents": [
+                      {"parts": [{"text": SYSTEM_PROMPT}]},
+                      {"parts": [{"text": user_input}]}
+                  ]
+              }
+
+              resp = requests.post(endpoint, json=payload, headers=headers, timeout=60)
+              if resp.status_code != 200:
+                  raise Exception(f"Gemini API Error: {resp.status_code} {resp.text}")
+
+              data = resp.json()
+              answer = ""
+              # Gemini response structure
+              try:
+                  answer = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+              except Exception:
+                  answer = str(data)
 
               files = re.findall(r"```file\s+name=([^\n]+)\n(.*?)```", answer, re.DOTALL)
               os.makedirs(".github/bot_backups", exist_ok=True)
@@ -87,7 +101,7 @@ jobs:
                   errors.append("⚠️ قد يكون هناك أخطاء أو مشاكل في جزء من الكود. راجع التفاصيل في الأعلى.")
 
               with open("results.log", "w", encoding="utf-8") as out:
-                  out.write("**رد الذكاء الاصطناعي:**\n\n")
+                  out.write("**رد بوت Gemini:**\n\n")
                   out.write(answer + "\n\n")
                   if log:
                       out.write("**سجل العمليات:**\n")
@@ -97,14 +111,10 @@ jobs:
                       out.write("\n".join(errors))
           except Exception as e:
               with open("results.log", "w", encoding="utf-8") as out:
-                  out.write(f"حدث خطأ أثناء تنفيذ سكريبت البوت:\n{str(e)}\n")
+                  out.write(f"حدث خطأ أثناء تنفيذ سكريبت Gemini:\n{str(e)}\n")
           EOF
 
       - name: Run Super AI Bot script
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GH_USER: ${{ github.event.issue.user.login }}
-          GH_OWNER: ${{ github.repository_owner }}
         run: python super_ai_bot.py
 
       - name: Ensure results.log exists
