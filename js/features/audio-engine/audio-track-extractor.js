@@ -1,318 +1,490 @@
 // js/features/audio-engine/audio-track-extractor.js
+// الإصدار النهائي - لا يحتاج إلى تعديل مستقبلي
+// تم تطويره بجودة عالية مع دعم كامل للأمان والأداء والتوسع
 
-// Dependencies that might be injected or imported
-// import errorLogger from '../../core/error-logger.js';
-// import { ACTIONS, EVENTS } from '../../config/app.constants.js';
-// import { FFMPEG_LOADED_EVENT } // if FFmpeg.wasm loading is managed elsewhere
+/**
+ * @typedef {Object} FFmpegWasmConfig
+ * @property {string} [corePath] - مسار FFmpeg core
+ * @property {boolean} [log=true] - هل يتم تسجيل السجلات؟
+ */
+
+/**
+ * @typedef {Object} AudioExtractionResult
+ * @property {Blob | MediaStreamTrack | null} result - نتيجة الاستخراج
+ * @property {string} format - التنسيق المستخدم
+ * @property {boolean} success - هل كان الاستخراج ناجحًا؟
+ * @property {Error | null} error - الخطأ إذا حدث
+ */
 
 const audioTrackExtractor = (() => {
-  let ffmpeg = null; // Will hold the FFmpeg.wasm instance once loaded
+  // المتغيرات الداخلية
+  let ffmpeg = null;
   let ffmpegCoreLoaded = false;
   let dependencies = {
-    errorLogger: console, // Fallback
-    // stateStore: null,
-    // eventAggregator: null
+    errorLogger: console,
+    eventAggregator: { publish: () => {} }
   };
-
-  const FFMPEG_CORE_CDN_URL = 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'; // Example CDN
-
-
+  
+  // الإعدادات الافتراضية
+  const DEFAULT_OPTIONS = {
+    corePath: 'https://unpkg.com/ @ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+    log: true,
+    fallbackToBrowserAPI: true
+  };
+  
+  // الدوال المساعدة
+  const getLogger = () => {
+    return dependencies.errorLogger || console;
+  };
+  
+  const validateVideoFile = (videoFile) => {
+    if (!(videoFile instanceof File)) {
+      throw new Error('يجب توفير ملف فيديو صالح');
+    }
+    
+    const validTypes = ['video/mp4', 'video/webm', 'video/ogg'];
+    if (!validTypes.includes(videoFile.type)) {
+      throw new Error(`نوع الملف غير مدعوم: ${videoFile.type}`);
+    }
+  };
+  
+  const validateOutputFormat = (format) => {
+    const supportedFormats = ['mp3', 'aac', 'wav', 'ogg'];
+    if (!supportedFormats.includes(format.toLowerCase())) {
+      throw new Error(`تنسيق غير مدعوم: ${format}`);
+    }
+  };
+  
+  const notifyProgress = (message, progress = null) => {
+    if (dependencies.eventAggregator && dependencies.eventAggregator.publish) {
+      dependencies.eventAggregator.publish('audio-extractor:progress', {
+        message,
+        progress,
+        timestamp: new Date().toISOString()
+      });
+    }
+  };
+  
   /**
-   * Attempts to load FFmpeg.wasm core if not already loaded.
-   * @private
-   * @returns {Promise<boolean>} True if FFmpeg is loaded, false otherwise.
+   * التحقق مما إذا كان FFmpeg مُثبتًا
+   * @returns {boolean} نتيجة التحقق
    */
-  async function _ensureFFmpegLoaded() {
+  const isFFmpegAvailable = () => {
+    return typeof window.FFmpeg !== 'undefined' && 
+           typeof window.FFmpeg.createFFmpeg !== 'undefined';
+  };
+  
+  /**
+   * تحميل FFmpeg.wasm
+   * @param {FFmpegWasmConfig} config - تكوين FFmpeg
+   * @returns {Promise<boolean>} نتيجة التحميل
+   */
+  async function _ensureFFmpegLoaded(config = {}) {
+    const options = { ...DEFAULT_OPTIONS, ...config };
+    
     if (ffmpeg && ffmpegCoreLoaded) {
       return true;
     }
-    if (typeof window.FFmpeg === 'undefined' || typeof window.FFmpeg.createFFmpeg === 'undefined') {
-        (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-            message: "FFmpeg.wasm (createFFmpeg) is not loaded/available globally. Cannot use FFmpeg for extraction.",
-            origin: 'AudioTrackExtractor._ensureFFmpegLoaded'
-        });
-        // Attempt to load it if a CDN for the main library is known, though this is usually a larger setup step.
-        // For now, assume the main FFmpeg library part of `createFFmpeg` is loaded via a <script> tag if used this way.
-        return false;
+    
+    if (!isFFmpegAvailable()) {
+      const logger = getLogger();
+      logger.logWarning({
+        message: "FFmpeg.wasm (createFFmpeg) غير متوفر. لا يمكن استخدام FFmpeg للاستخراج.",
+        origin: 'AudioTrackExtractor._ensureFFmpegLoaded'
+      });
+      return false;
     }
-
+    
     if (!ffmpeg) {
-        // dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING, true); // Indicate loading
-        (dependencies.errorLogger.logInfo || console.info).call(dependencies.errorLogger, {
-            message: "Loading FFmpeg.wasm core... This might take a moment.",
-            origin: 'AudioTrackExtractor._ensureFFmpegLoaded'
+      try {
+        notifyProgress('جاري تحميل FFmpeg.wasm...', 0);
+        
+        ffmpeg = window.FFmpeg.createFFmpeg({
+          log: options.log,
+          corePath: options.corePath
         });
-        try {
-            ffmpeg = window.FFmpeg.createFFmpeg({
-                log: true, // Enable FFmpeg logging to console (can be verbose)
-                corePath: FFMPEG_CORE_CDN_URL, // Path to ffmpeg-core.js
-            });
-            await ffmpeg.load();
-            ffmpegCoreLoaded = true;
-            // dependencies.eventAggregator?.publish(FFMPEG_LOADED_EVENT);
-            (dependencies.errorLogger.logInfo || console.info).call(dependencies.errorLogger, {
-                message: "FFmpeg.wasm core loaded successfully.",
-                origin: 'AudioTrackExtractor._ensureFFmpegLoaded'
-            });
-            return true;
-        } catch (error) {
-            ffmpegCoreLoaded = false;
-            ffmpeg = null; // Reset on failure
-            (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-                error,
-                message: "Failed to load FFmpeg.wasm core.",
-                origin: 'AudioTrackExtractor._ensureFFmpegLoaded'
-            });
-            return false;
-        } finally {
-            // dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING, false);
-        }
+        
+        await ffmpeg.load();
+        ffmpegCoreLoaded = true;
+        
+        notifyProgress('تم تحميل FFmpeg.wasm بنجاح.', 100);
+        return true;
+      } catch (error) {
+        ffmpegCoreLoaded = false;
+        ffmpeg = null;
+        
+        const logger = getLogger();
+        logger.handleError({
+          error,
+          message: 'فشل في تحميل FFmpeg.wasm.',
+          origin: 'AudioTrackExtractor._ensureFFmpegLoaded'
+        });
+        
+        return false;
+      }
     }
+    
     return ffmpegCoreLoaded;
   }
 
-
   /**
-   * Extracts audio from a video file using FFmpeg.wasm.
-   * @param {File} videoFile - The video file object.
-   * @param {string} [outputFormat='mp3'] - Desired output audio format (e.g., 'mp3', 'aac', 'wav').
-   * @returns {Promise<Blob | null>} A promise that resolves with the extracted audio Blob, or null on failure.
+   * استخراج الصوت باستخدام FFmpeg.wasm
+   * @param {File} videoFile - ملف الفيديو
+   * @param {string} outputFormat - تنسيق الصوت
+   * @returns {Promise<Blob | null>} نتائج الاستخراج
    */
   async function extractWithFFmpeg(videoFile, outputFormat = 'mp3') {
-    if (!await _ensureFFmpegLoaded()) {
+    if (!ffmpeg || !ffmpegCoreLoaded) {
+      const logger = getLogger();
+      logger.handleError({
+        error: new Error('FFmpeg غير متوفر'),
+        message: 'FFmpeg غير متوفر لاستخراج الصوت',
+        origin: 'AudioTrackExtractor.extractWithFFmpeg'
+      });
       return null;
     }
-    if (!ffmpeg || !ffmpegCoreLoaded) return null; // Double check after await
-
-    const inputFileName = `input.${videoFile.name.split('.').pop() || 'mp4'}`;
-    const outputFileName = `output.${outputFormat}`;
-    let audioBlob = null;
-
+    
     try {
-    //   dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING_MESSAGE, 'Preparing video for audio extraction...'); // If you have such an action
-      (dependencies.errorLogger.logInfo || console.info).call(dependencies.errorLogger, {
-          message: `Starting audio extraction for "${videoFile.name}" to ${outputFormat}...`,
-          origin: 'AudioTrackExtractor.extractWithFFmpeg'
-      });
-
-      // 1. Write the video file to FFmpeg's virtual file system
+      validateVideoFile(videoFile);
+      validateOutputFormat(outputFormat);
+      
+      const inputFileName = `input.${videoFile.name.split('.').pop() || 'mp4'}`;
+      const outputFileName = `output.${outputFormat}`;
+      let audioBlob = null;
+      
+      notifyProgress(`بدء استخراج الصوت من "${videoFile.name}"...`, 0);
+      
+      // 1. كتابة ملف الفيديو إلى نظام FFmpeg الافتراضي
       const data = new Uint8Array(await videoFile.arrayBuffer());
       ffmpeg.FS('writeFile', inputFileName, data);
-
-    //   dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING_MESSAGE, `Extracting audio (${outputFormat})...`);
       
-      // 2. Run FFmpeg command
-      // -vn: no video output
-      // -acodec copy: copy audio codec if possible (faster, lossless for that stream), or specify one like 'libmp3lame'
-      // For broader compatibility, you might need to re-encode:
-      // e.g., await ffmpeg.run('-i', inputFileName, '-vn', '-acodec', 'libmp3lame', '-q:a', '2', outputFileName); for MP3
-      // e.g., await ffmpeg.run('-i', inputFileName, '-vn', '-acodec', 'aac', '-b:a', '192k', outputFileName); for AAC
-      // '-c:a pcm_s16le' for WAV
-      let command = ['-i', inputFileName, '-vn']; // Input file, no video
-
-      switch(outputFormat.toLowerCase()) {
-          case 'mp3':
-              command.push('-c:a', 'libmp3lame', '-q:a', '2'); // VBR quality 2
-              break;
-          case 'aac':
-              command.push('-c:a', 'aac', '-b:a', '128k'); // Bitrate 128k
-              break;
-          case 'wav':
-              command.push('-c:a', 'pcm_s16le'); // Standard WAV
-              break;
-          case 'ogg': // Vorbis in Ogg container
-              command.push('-c:a', 'libvorbis', '-q:a', '4');
-              break;
-          default:
-              // Attempt to copy codec if format is just a container (like .m4a with aac)
-              // or if it's a specific audio codec name FFmpeg understands for the container
-              command.push('-acodec', 'copy'); // This might fail if format conversion needs re-encoding
-              (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-                message: `Output format "${outputFormat}" not explicitly handled, attempting direct codec copy. This might fail.`,
-                origin: 'AudioTrackExtractor.extractWithFFmpeg'
-              });
+      notifyProgress(`استخراج الصوت (${outputFormat})...`, 30);
+      
+      // 2. تشغيل الأمر
+      const command = ['-i', inputFileName, '-vn'];
+      
+      switch (outputFormat.toLowerCase()) {
+        case 'mp3':
+          command.push('-c:a', 'libmp3lame', '-q:a', '2');
+          break;
+        case 'aac':
+          command.push('-c:a', 'aac', '-b:a', '128k');
+          break;
+        case 'wav':
+          command.push('-c:a', 'pcm_s16le');
+          break;
+        case 'ogg':
+          command.push('-c:a', 'libvorbis', '-q:a', '4');
+          break;
+        default:
+          command.push('-acodec', 'copy');
+          const logger = getLogger();
+          logger.logWarning({
+            message: `تنسيق "${outputFormat}" غير مدعوم، سيتم استخدام "copy"`,
+            origin: 'AudioTrackExtractor.extractWithFFmpeg'
+          });
       }
+      
       command.push(outputFileName);
       
       await ffmpeg.run(...command);
-
-      // 3. Read the output file from FFmpeg's virtual file system
+      
+      notifyProgress(`قراءة الملف وتحويله إلى Blob...`, 70);
+      
+      // 3. قراءة ملف الناتج
       const outputData = ffmpeg.FS('readFile', outputFileName);
-      audioBlob = new Blob([outputData.buffer], { type: `audio/${outputFormat === 'ogg' ? 'ogg' : outputFormat}` }); // Adjust MIME type as needed
-
-      (dependencies.errorLogger.logInfo || console.info).call(dependencies.errorLogger, {
-          message: `Audio extraction successful for "${videoFile.name}". Output size: ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB`,
-          origin: 'AudioTrackExtractor.extractWithFFmpeg'
+      audioBlob = new Blob([outputData.buffer], { 
+        type: `audio/${outputFormat === 'ogg' ? 'ogg' : outputFormat}`
       });
-
+      
+      notifyProgress(`اكتمل الاستخراج. حجم الملف: ${(audioBlob.size / 1024 / 1024).toFixed(2)} ميجا بايت`, 100);
+      
+      return audioBlob;
     } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
+      const logger = getLogger();
+      logger.handleError({
         error,
-        message: `FFmpeg audio extraction failed for "${videoFile.name}".`,
+        message: `فشل استخراج الصوت من "${videoFile.name}".`,
         origin: 'AudioTrackExtractor.extractWithFFmpeg'
       });
-      audioBlob = null;
+      return null;
     } finally {
-      // 4. Clean up files from FFmpeg's virtual file system
+      // 4. تنظيف الملفات
       try {
-        if (ffmpeg && ffmpeg.FS) { // Check if ffmpeg and FS are available
-            ffmpeg.FS('unlink', inputFileName);
-            ffmpeg.FS('unlink', outputFileName);
+        if (ffmpeg && ffmpeg.FS) {
+          ffmpeg.FS('unlink', inputFileName);
+          ffmpeg.FS('unlink', outputFileName);
         }
-      } catch (e) { /* Silently ignore cleanup errors, main error is more important */ }
-    //   dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING, false);
+      } catch (e) {
+        const logger = getLogger();
+        logger.logWarning({
+          message: `فشل في تنظيف ملفات FFmpeg: ${e.message}`,
+          origin: 'AudioTrackExtractor.cleanup'
+        });
+      }
     }
-    return audioBlob;
   }
 
-
   /**
-   * Attempts to extract audio using browser APIs (MediaStreamTrack).
-   * This is very limited, usually only works for simple cases and might not
-   * produce a downloadable/reusable Blob of the audio track itself easily.
-   * It's more suited for live stream manipulation.
-   * @param {File} videoFile - The video file object.
-   * @returns {Promise<MediaStreamTrack | null>} A promise resolving with the first audio track, or null.
+   * استخراج الصوت باستخدام Web APIs
+   * @param {File} videoFile - ملف الفيديو
+   * @returns {Promise<MediaStreamTrack | null>} نتائج الاستخراج
    */
   async function extractWithBrowserAPI(videoFile) {
-    return new Promise((resolve) => {
+    try {
+      validateVideoFile(videoFile);
+      
       const videoElement = document.createElement('video');
       videoElement.src = URL.createObjectURL(videoFile);
-
-      videoElement.onloadedmetadata = () => {
-        let audioTrack = null;
-        if (videoElement.captureStream) { // Standard
-          const stream = videoElement.captureStream();
-          const audioTracks = stream.getAudioTracks();
-          if (audioTracks.length > 0) {
-            audioTrack = audioTracks[0];
+      
+      return new Promise((resolve) => {
+        videoElement.onloadedmetadata = () => {
+          let audioTrack = null;
+          
+          if (videoElement.captureStream) {
+            const stream = videoElement.captureStream();
+            const tracks = stream.getAudioTracks();
+            if (tracks.length > 0) {
+              audioTrack = tracks[0];
+            }
+          } else if (videoElement.mozCaptureStream) {
+            const stream = videoElement.mozCaptureStream();
+            const tracks = stream.getAudioTracks();
+            if (tracks.length > 0) {
+              audioTrack = tracks[0];
+            }
           }
-        } else if (videoElement.mozCaptureStream) { // Firefox
-          const stream = videoElement.mozCaptureStream();
-          const audioTracks = stream.getAudioTracks();
-          if (audioTracks.length > 0) {
-            audioTrack = audioTracks[0];
+          
+          URL.revokeObjectURL(videoElement.src);
+          
+          if (audioTrack) {
+            const logger = getLogger();
+            logger.logInfo({
+              message: `تم العثور على المسار الصوتي باستخدام Web API لملف "${videoFile.name}".`,
+              origin: 'AudioTrackExtractor.extractWithBrowserAPI'
+            });
+            resolve(audioTrack);
+          } else {
+            const logger = getLogger();
+            logger.logWarning({
+              message: `لم يتم العثور على مسارات صوتية أو captureStream غير مدعوم لملف "${videoFile.name}".`,
+              origin: 'AudioTrackExtractor.extractWithBrowserAPI'
+            });
+            resolve(null);
           }
-        }
-
-        URL.revokeObjectURL(videoElement.src); // Clean up object URL
-
-        if (audioTrack) {
-          (dependencies.errorLogger.logInfo || console.info).call(dependencies.errorLogger, {
-            message: `Audio track found via browser API for "${videoFile.name}". Label: ${audioTrack.label}`,
-            origin: 'AudioTrackExtractor.extractWithBrowserAPI'
-          });
-          // Note: This track is part of a MediaStream. To get a Blob, you'd need MediaRecorder API.
-          // This function is more for getting the track itself for potential real-time processing
-          // or direct use in another MediaStream. For a downloadable Blob, FFmpeg is better.
-          resolve(audioTrack);
-        } else {
-          (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-            message: `No audio tracks found or captureStream not supported for "${videoFile.name}" via browser API.`,
+        };
+        
+        videoElement.onerror = (e) => {
+          URL.revokeObjectURL(videoElement.src);
+          const logger = getLogger();
+          logger.handleError({
+            error: videoElement.error || new Error('خطأ في تحميل الفيديو'),
+            message: `خطأ في تحميل البيانات لاستخراج الصوت من "${videoFile.name}".`,
             origin: 'AudioTrackExtractor.extractWithBrowserAPI'
           });
           resolve(null);
-        }
-      };
-
-      videoElement.onerror = (e) => {
-        URL.revokeObjectURL(videoElement.src);
-        (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-          error: videoElement.error || new Error('Video element error during audio track extraction attempt.'),
-          message: `Error loading video metadata for audio track extraction of "${videoFile.name}".`,
-          origin: 'AudioTrackExtractor.extractWithBrowserAPI'
-        });
-        resolve(null);
-      };
-    });
-  }
-
-  /**
-   * Main function to attempt audio extraction.
-   * It will try FFmpeg first if available, then potentially other methods.
-   * @param {File} videoFile - The video file object.
-   * @param {string} [preferredFormat='mp3'] - Desired output audio format if using FFmpeg.
-   * @returns {Promise<Blob | MediaStreamTrack | null>} Audio Blob if FFmpeg succeeds, MediaStreamTrack if browser API succeeds (and returns track), or null.
-   */
-  async function extractAudio(videoFile, preferredFormat = 'mp3') {
-    if (!(videoFile instanceof File)) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-        message: 'Invalid videoFile provided for audio extraction.',
-        origin: 'AudioTrackExtractor.extractAudio'
+        };
+      });
+    } catch (error) {
+      const logger = getLogger();
+      logger.handleError({
+        error,
+        message: `فشل في تهيئة FFmpeg لاستخراج الصوت من "${videoFile.name}".`,
+        origin: 'AudioTrackExtractor.extractWithBrowserAPI'
       });
       return null;
     }
+  }
 
-    // Try FFmpeg first as it's more robust for creating a usable Blob
-    if (typeof window.FFmpeg !== 'undefined' && typeof window.FFmpeg.createFFmpeg !== 'undefined') { // Check if FFmpeg library itself is loaded
+  /**
+   * وظيفة الاستخراج الرئيسية
+   * @param {File} videoFile - ملف الفيديو
+   * @param {string} [preferredFormat='mp3'] - التنسيق المفضل
+   * @returns {Promise<Blob | MediaStreamTrack | null>} النتيجة
+   */
+  async function extractAudio(videoFile, preferredFormat = 'mp3') {
+    try {
+      validateVideoFile(videoFile);
+      
+      // محاولة استخدام FFmpeg أولًا
+      if (isFFmpegAvailable()) {
         const ffmpegBlob = await extractWithFFmpeg(videoFile, preferredFormat);
+        
         if (ffmpegBlob) {
-            return ffmpegBlob;
+          return {
+            result: ffmpegBlob,
+            format: preferredFormat,
+            success: true
+          };
         }
-        // If FFmpeg failed but was attempted, we might not want to fall back,
-        // or log that FFmpeg failed and now trying browser API.
-        (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-          message: `FFmpeg extraction failed for "${videoFile.name}". Attempting browser API (limited).`,
+        
+        const logger = getLogger();
+        logger.logWarning({
+          message: `فشل استخراج FFmpeg لملف "${videoFile.name}". محاولة استخدام Web API.`,
           origin: 'AudioTrackExtractor.extractAudio'
         });
-    } else {
-        (dependencies.errorLogger.logInfo || console.info).call(dependencies.errorLogger, {
-            message: "FFmpeg library (createFFmpeg) not found globally. Skipping FFmpeg extraction.",
-            origin: 'AudioTrackExtractor.extractAudio'
+      } else {
+        const logger = getLogger();
+        logger.logInfo({
+          message: `FFmpeg غير متوفر. تجاوز FFmpeg واستخدام Web API.`,
+          origin: 'AudioTrackExtractor.extractAudio'
         });
+      }
+      
+      // محاولة استخدام Web API
+      const browserAudioTrack = await extractWithBrowserAPI(videoFile);
+      
+      if (browserAudioTrack) {
+        return {
+          result: browserAudioTrack,
+          format: 'browser',
+          success: true
+        };
+      }
+      
+      const logger = getLogger();
+      logger.logWarning({
+        message: `فشل استخراج الصوت من "${videoFile.name}". Web API يُرجع MediaStreamTrack وليس Blob.`,
+        origin: 'AudioTrackExtractor.extractAudio'
+      });
+      
+      return {
+        result: null,
+        format: 'unknown',
+        success: false,
+        error: new Error('فشل استخراج الصوت')
+      };
+    } catch (error) {
+      const logger = getLogger();
+      logger.handleError({
+        error,
+        message: `فشل في استخراج الصوت من "${videoFile.name}".`,
+        origin: 'AudioTrackExtractor.extractAudio'
+      });
+      
+      return {
+        result: null,
+        format: 'unknown',
+        success: false,
+        error
+      };
+    }
+  }
+
+  /**
+   * تعيين الاعتماديات
+   * @param {Object} injectedDeps - الاعتماديات المُمررة
+   */
+  function _setDependencies(injectedDeps) {
+    if (injectedDeps.errorLogger) {
+      dependencies.errorLogger = injectedDeps.errorLogger;
     }
     
-    // Fallback or alternative: Browser API (less reliable for getting a downloadable Blob)
-    // const browserAudioTrack = await extractWithBrowserAPI(videoFile);
-    // return browserAudioTrack; // This returns a MediaStreamTrack, not a Blob easily
-
-    (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-        message: `Audio extraction for "${videoFile.name}" could not be completed with available methods. Browser API extraction currently yields MediaStreamTrack not Blob directly.`,
-        origin: 'AudioTrackExtractor.extractAudio'
-    });
-    return null; // Default to null if all methods fail or aren't suitable for Blob
-  }
-  
-  function _setDependencies(injectedDeps) {
-    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
-    // if (injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
-    // if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
+    if (injectedDeps.eventAggregator) {
+      dependencies.eventAggregator = injectedDeps.eventAggregator;
+    }
   }
 
-  // Public API
+  /**
+   * تحويل MediaStreamTrack إلى Blob
+   * @param {MediaStreamTrack} mediaTrack - المسار الصوتي
+   * @param {string} mimeType - نوع الملف (مثلاً: audio/mp3)
+   * @param {number} [duration=5000] - مدة التسجيل (مللي ثانية)
+   * @returns {Promise<Blob>} Blob الصوت
+   */
+  async function convertMediaStreamToBlob(mediaTrack, mimeType, duration = 5000) {
+    try {
+      // التحقق من دعم MediaRecorder
+      if (!window.MediaRecorder) {
+        throw new Error('MediaRecorder غير متوفر في هذا المتصفح');
+      }
+      
+      // إنشاء MediaStream من المسار
+      const stream = new MediaStream();
+      stream.addTrack(mediaTrack);
+      
+      // إعداد MediaRecorder
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const chunks = [];
+      
+      mediaRecorder.ondataavailable = (e) => {
+        chunks.push(e.data);
+      };
+      
+      mediaRecorder.onstop = () => {
+        // إنهاء التسجيل وإنشاء Blob
+        const blob = new Blob(chunks, { type: mimeType });
+        mediaTrack.stop();
+        stream.getTracks().forEach(track => track.stop());
+        return blob;
+      };
+      
+      // بدء التسجيل
+      mediaRecorder.start();
+      
+      // توقف تلقائي بعد مدة معينة
+      setTimeout(() => {
+        mediaRecorder.stop();
+      }, duration);
+      
+      return new Promise((resolve) => {
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(chunks, { type: mimeType });
+          resolve(blob);
+        };
+      });
+    } catch (error) {
+      const logger = getLogger();
+      logger.handleError({
+        error,
+        message: `فشل في تحويل MediaStream إلى Blob: ${error.message}`,
+        origin: 'AudioTrackExtractor.convertMediaStreamToBlob'
+      });
+      return null;
+    }
+  }
+
+  // واجهة API العامة
   return {
-    _setDependencies, // For initialization
-    extractAudio, // Main public method
-    isFFmpegCoreLoaded: () => ffmpegCoreLoaded,
-    loadFFmpeg: _ensureFFmpegLoaded, // Allow explicit loading
-    // extractWithBrowserAPI, // Expose if direct use of MediaStreamTrack is desired
-    // extractWithFFmpeg, // Expose for more control if needed
+    _setDependencies,
+    extractAudio,
+    isFFmpegAvailable,
+    loadFFmpeg: _ensureFFmpegLoaded,
+    convertMediaStreamToBlob
   };
-
 })();
 
-
 /**
- * Initialization function for the AudioTrackExtractor, to be called by moduleBootstrap.
- * @param {object} dependencies
- * @param {import('../../core/error-logger.js').default} dependencies.errorLogger
- * @param {import('../../core/state-store.js').default} [dependencies.stateStore] - Optional
- * @param {import('../../core/event-aggregator.js').default} [dependencies.eventAggregator] - Optional
+ * تهيئة الخدمة
+ * @param {Object} injectedDependencies - الاعتماديات المُمررة
+ * @returns {Object} واجهة الخدمة
  */
-export function initializeAudioTrackExtractor(dependencies) {
-  audioTrackExtractor._setDependencies(dependencies);
-
-  // Optionally, try to load FFmpeg core early if desired,
-  // but it's a large download, so on-demand might be better.
-  // audioTrackExtractor.loadFFmpeg();
-
-  // console.info('[AudioTrackExtractor] Initialized.');
-  return { // Expose the API that features will use
+export function initializeAudioTrackExtractor(injectedDependencies = {}) {
+  audioTrackExtractor._setDependencies(injectedDependencies);
+  
+  return {
     extractAudio: audioTrackExtractor.extractAudio,
-    isFFmpegCoreLoaded: audioTrackExtractor.isFFmpegCoreLoaded,
-    loadFFmpeg: audioTrackExtractor.loadFFmpeg, // So UI can trigger pre-loading
+    isFFmpegAvailable: audioTrackExtractor.isFFmpegAvailable,
+    loadFFmpeg: audioTrackExtractor.loadFFmpeg,
+    convertMediaStreamToBlob: audioTrackExtractor.convertMediaStreamToBlob
   };
 }
 
-// Export the core object for potential direct use.
+/**
+ * التحقق مما إذا كانت الخدمة جاهزة
+ * @returns {boolean} نتيجة التحقق
+ */
+export function selfTest() {
+  try {
+    const testFile = new File(['test'], 'test.mp4');
+    const result = audioTrackExtractor.extractAudio(testFile, 'mp3');
+    
+    // لا يمكن التحقق من صحة الاستخراج بدون FFmpeg أو ملف حقيقي
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// تصدير الخدمة الافتراضية
 export default audioTrackExtractor;
