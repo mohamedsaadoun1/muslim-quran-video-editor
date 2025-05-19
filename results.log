@@ -1,18 +1,13 @@
-**رد البوت (OpenAI (خطأ)):**
+**رد البوت (OpenAI (gpt-4o)):**
 
-حدث خطأ مع Gemini، سيتم تجربة OpenAI...
+حدث خطأ مع Gemini (gemini-pro)، سيتم تجربة OpenAI...
 Gemini API Error: 404
-{
-  "error": {
-    "code": 404,
-    "message": "models/gemini-pro is not found for API version v1, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
-    "status": "NOT_FOUND"
-  }
-}
+models/gemini-pro is not found for API version v1, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
 
 
-حدث خطأ أيضًا مع OpenAI:
-Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-proj-********************************************************************************************************************************************************4R4A. You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_api_key'}}
+---
+
+Error code: 429 - {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.', 'type': 'insufficient_quota', 'param': None, 'code': 'insufficient_quota'}
 
 **تحذيرات:**
 ⚠️ قد يكون هناك أخطاء أو مشاكل في جزء من الكود. راجع التفاصيل في الأعلى.

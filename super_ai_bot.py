@@ -1,8 +1,10 @@
-import os, re, shutil, requests, json
+import os, re, shutil, requests
 from datetime import datetime
 
-GEMINI_API_KEY = "AIzaSyAVwL9OTXKftTHXqatG2hV07MN4erWXoBc"
-OPENAI_API_KEY = "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"
+GEMINI_MODEL = "gemini-pro"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+OPENAI_MODEL = "gpt-4o"
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 SYSTEM_PROMPT = '''
 أنت سوبر بوت للبرمجة وإدارة المشاريع على GitHub
@@ -11,7 +13,7 @@ SYSTEM_PROMPT = '''
 - لو أمر فيه حذف جماعي/تعديل خطير، وضّح للمستخدم وخذ تأكيد قبل التنفيذ.
 - أي مشروع تولده يكون كامل، منظم، فيه كل الملفات (build, manifest, resources, main code, tests, docs).
 - دعم توليد مشاريع أندرويد ضخمة (Kotlin/Java/Flutter/React Native)، مع كل ملفاتها وملفات البناء والتوثيق.
-- دعم توليد مشاريع بأي لغة أو تقنية أو معمارية (monorepo, microservices, plugins, إلخ).
+- دعم توليد مشاريع بأي لغة أو تقنية أو معمارية (monorepo, microservices, plugins، إلخ).
 - نفذ تحليل أمان وكود لأي أمر قبل التنفيذ، ولو فيه خطأ أو خطر اشرح السبب واقترح حلول.
 - نفذ أوامر Undo/Redo/History، واحتفظ بنسخ احتياطية تلقائية.
 - لو طلب المستخدم شرح أو تلخيص أو مقارنة أو تحليل، رد عليه بتفصيل وذكاء.
@@ -29,7 +31,9 @@ name=اسم_الملف
 '''
 
 def run_gemini(system_prompt, user_input):
-    endpoint = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+    if not GEMINI_API_KEY:
+        raise Exception("لم يتم توفير مفتاح Gemini.")
+    endpoint = f"https://generativelanguage.googleapis.com/v1/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [
@@ -38,7 +42,12 @@ def run_gemini(system_prompt, user_input):
     }
     resp = requests.post(endpoint, json=payload, headers=headers, timeout=60)
     if resp.status_code != 200:
-        raise Exception(f"Gemini API Error: {resp.status_code}\n{resp.text}")
+        try:
+            data = resp.json()
+            msg = data.get('error', {}).get('message', '')
+        except Exception:
+            msg = resp.text
+        raise Exception(f"Gemini API Error: {resp.status_code}\n{msg}")
     data = resp.json()
     try:
         return data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -46,18 +55,25 @@ def run_gemini(system_prompt, user_input):
         return str(data)
 
 def run_openai(system_prompt, user_input):
+    if not OPENAI_API_KEY:
+        return "لم يتم توفير مفتاح OpenAI."
     import openai
     openai.api_key = OPENAI_API_KEY
-    resp = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input}
-        ],
-        max_tokens=4096,
-        temperature=0.1
-    )
-    return resp.choices[0].message.content.strip()
+    try:
+        resp = openai.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_input}
+            ],
+            max_tokens=4096,
+            temperature=0.1
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        if hasattr(e, 'status_code') and hasattr(e, 'body'):
+            return f"Error code: {e.status_code} - {e.body}"
+        return str(e)
 
 def parse_files(answer):
     files = re.findall(r"```file\s+name=([^\n]+)\n(.*?)```", answer, re.DOTALL)
@@ -84,18 +100,18 @@ try:
     # جرب Gemini أولاً
     try:
         answer = run_gemini(SYSTEM_PROMPT, user_input)
-        source = "Gemini"
+        source = f"Gemini ({GEMINI_MODEL})"
     except Exception as e:
-        answer = f"حدث خطأ مع Gemini، سيتم تجربة OpenAI...\n{str(e)}\n"
-        source = "Gemini (خطأ)"
+        answer = f"حدث خطأ مع Gemini ({GEMINI_MODEL})، سيتم تجربة OpenAI...\n{str(e)}\n"
+        source = f"Gemini ({GEMINI_MODEL} خطأ)"
         # جرب OpenAI
         try:
             openai_answer = run_openai(SYSTEM_PROMPT, user_input)
             answer += "\n\n---\n\n" + openai_answer
-            source = "OpenAI"
+            source = f"OpenAI ({OPENAI_MODEL})"
         except Exception as oe:
-            answer += f"\nحدث خطأ أيضًا مع OpenAI:\n{str(oe)}"
-            source = "OpenAI (خطأ)"
+            answer += f"\nحدث خطأ أيضًا مع OpenAI ({OPENAI_MODEL}):\n{str(oe)}"
+            source = f"OpenAI ({OPENAI_MODEL} خطأ)"
 
     log = parse_files(answer)
     errors = []
