@@ -74,15 +74,12 @@ export function escapeHtml(unsafeStr) {
   if (unsafeStr === null || unsafeStr === undefined) return '';
   if (typeof unsafeStr !== 'string') unsafeStr = String(unsafeStr);
 
-  return unsafeStr
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, """)
-    .replace(/'/g, "'"); // Alternatively use ' but ' is more widely supported
-}
-
-/**
+return unsafeStr
+  .replace(/&/g, "&")
+  .replace(/</g, "<")
+  .replace(/>/g, ">")
+  .replace(/"/g, "")
+  .replace(/'/g, ""); // Alternatively use ' but ' is more widely supported
  * Unescapes HTML entities back to their characters.
  * @param {string} safeStr - The string with HTML entities.
  * @returns {string} The unescaped string.
