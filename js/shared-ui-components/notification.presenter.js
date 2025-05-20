@@ -1,110 +1,199 @@
 // js/shared-ui-components/notification.presenter.js
 
-// DOMElements يمكن استخدامه إذا كان هناك حاوية إشعارات ثابتة في HTML،
-// ولكننا سنقوم بإنشاء وإزالة الإشعارات ديناميكيًا ونضيفها إلى body أو حاوية مخصصة.
-// import DOMElements from '../core/dom-elements.js';
+/**
+ * @typedef {'success' | 'error' | 'info' | 'warning'} NotificationType
+ * أنواع الإشعارات المتاحة
+ */
 
-// localizationService قد يُستخدم لترجمة أنواع الإشعارات إذا أردت ذلك،
-// ولكن عادة ما تكون الرسالة نفسها هي المُترجمة بواسطة الوحدة المُطلِقة للحدث.
-// import localizationService from '../core/localization.service.js';
+/**
+ * @typedef {Object} NotificationConfig
+ * @property {string} message - رسالة الإشعار
+ * @property {NotificationType} [type='info'] - نوع الإشعار
+ * @property {number} [duration=4000] - مدة عرض الإشعار بالمللي ثانية
+ * @property {string} [id] - معرف فريد للإشعار
+ * @property {boolean} [dismissible=true] - هل يمكن إغلاق الإشعار يدويًا
+ * @property {function} [onDismiss] - وظيفة عند إغلاق الإشعار
+ * @property {function} [onClick] - وظيفة عند النقر على الإشعار
+ * @property {string} [position='bottom-right'] - موقع الإشعار على الشاشة
+ * @property {string} [customClass] - فئة CSS مخصصة
+ * @property {boolean} [rtl=false] - هل الإشعار يدعم اللغة العربية
+ */
 
-import { EVENTS } from '../config/app.constants.js'; // لاستيراد EVENTS.NOTIFICATION_REQUESTED
+/**
+ * @typedef {Object} NotificationDependencies
+ * @property {Object} eventAggregator - محرك الأحداث
+ * @property {Object} errorLogger - مسجل الأخطاء
+ * @property {Object} localizationService - خدمة الترجمة
+ */
 
+/**
+ * مُقدّم الإشعارات الديناميكية
+ * @type {{}}
+ */
 const notificationPresenter = (() => {
   let notificationContainer = null;
-  const defaultNotificationDuration = 4000; // milliseconds
-  let activeNotifications = new Set(); // To manage multiple notifications if allowed
-
-  // Dependencies injected during initialization
-  let deps = {
-    eventAggregator: { subscribe: () => ({ unsubscribe: () => {} }), publish: () => {} }, // Fallback
-    errorLogger: console // Fallback
+  const defaultNotificationDuration = 4000; // 4 ثوانٍ
+  const maxNotifications = 5; // الحد الأقصى للإشعارات
+  let activeNotifications = new Set(); // تتبع الإشعارات النشطة
+  let dependencies = {
+    eventAggregator: {
+      subscribe: (event, handler) => {
+        window.addEventListener(event, handler);
+        return { unsubscribe: () => window.removeEventListener(event, handler) };
+      },
+      publish: (event, detail) => window.dispatchEvent(new CustomEvent(event, { detail }))
+    },
+    errorLogger: console,
+    localizationService: {
+      translate: (key) => key
+    }
   };
 
   /**
-   * Creates the main container for notifications if it doesn't exist.
-   * The container is appended to the document body.
+   * إنشاء حاوية الإشعارات
    * @private
    */
   function _ensureNotificationContainer() {
     if (!notificationContainer || !document.body.contains(notificationContainer)) {
       notificationContainer = document.createElement('div');
-      notificationContainer.className = 'notification-container'; // Add CSS for this class
+      notificationContainer.className = 'notification-container';
       document.body.appendChild(notificationContainer);
     }
   }
 
   /**
-   * Creates and displays a single notification element.
-   * @param {object} notificationConfig
-   * @param {string} notificationConfig.message - The message to display.
-   * @param {'success' | 'error' | 'info' | 'warning'} [notificationConfig.type='info'] - Type of notification for styling.
-   * @param {number} [notificationConfig.duration=defaultNotificationDuration] - How long to display the notification.
-   *                                                                               Set to 0 or Infinity for manual close.
+   * إنشاء عنصر الإشعار
+   * @private
+   * @param {NotificationConfig} config - إعدادات الإشعار
+   * @returns {HTMLElement} عنصر الإشعار
    */
-  function _showNotification(notificationConfig) {
-    _ensureNotificationContainer();
-
+  function _createNotificationElement(config) {
     const {
       message,
       type = 'info',
       duration = defaultNotificationDuration,
-      id = `notif-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` // Unique ID
-    } = notificationConfig;
+      id = `notif-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      dismissible = true,
+      onDismiss,
+      onClick,
+      position = 'bottom-right',
+      customClass = '',
+      rtl = false
+    } = config;
 
     const notificationElement = document.createElement('div');
-    notificationElement.className = `notification notification-${type} notification-enter`; // Base, type, and entry animation class
+    notificationElement.className = `notification notification-${type} ${customClass} ${position} ${rtl ? 'rtl' : 'ltr'}`;
+    notificationElement.id = id;
     notificationElement.setAttribute('role', type === 'error' ? 'alert' : 'status');
     notificationElement.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
-    notificationElement.id = id;
-
+    notificationElement.setAttribute('aria-atomic', 'true');
+    
+    // عنصر الرسالة
     const messageElement = document.createElement('span');
     messageElement.className = 'notification-message';
     messageElement.textContent = message;
     notificationElement.appendChild(messageElement);
 
-    // Optional: Add a close button to each notification
-    const closeButton = document.createElement('button');
-    closeButton.className = 'notification-close-btn';
-    closeButton.innerHTML = '×'; // Simple 'x' character
-    closeButton.setAttribute('aria-label', 'Close notification'); // Accessibility
-    closeButton.onclick = () => _removeNotification(notificationElement);
-    notificationElement.appendChild(closeButton);
-
-    // Prepend for newest notifications at the top (or append for bottom)
-    if (notificationContainer.firstChild) {
-        notificationContainer.insertBefore(notificationElement, notificationContainer.firstChild);
-    } else {
-        notificationContainer.appendChild(notificationElement);
-    }
-    activeNotifications.add(notificationElement);
-
-    // Trigger reflow for CSS animation
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _ = notificationElement.offsetHeight; // Reading offsetHeight forces a reflow
-    notificationElement.classList.remove('notification-enter');
-    notificationElement.classList.add('notification-show');
-
-
-    if (duration > 0 && duration !== Infinity) {
-      setTimeout(() => {
+    // زر الإغلاق (إن وجد)
+    if (dismissible) {
+      const closeButton = document.createElement('button');
+      closeButton.className = 'notification-close-btn';
+      closeButton.innerHTML = '×'; // رمز إغلاق بسيط
+      closeButton.setAttribute('aria-label', dependencies.localizationService.translate('notification.close'));
+      closeButton.onclick = (e) => {
+        e.stopPropagation();
         _removeNotification(notificationElement);
-      }, duration);
+        if (typeof onDismiss === 'function') {
+          onDismiss(notificationElement);
+        }
+      };
+      notificationElement.appendChild(closeButton);
+    }
+
+    // معالج النقر على الإشعار
+    if (typeof onClick === 'function') {
+      notificationElement.style.cursor = 'pointer';
+      notificationElement.onclick = (e) => {
+        onClick(e);
+        _removeNotification(notificationElement);
+      };
+    }
+
+    return notificationElement;
+  }
+
+  /**
+   * عرض الإشعار
+   * @private
+   * @param {NotificationConfig} notificationConfig - إعدادات الإشعار
+   */
+  function _showNotification(notificationConfig) {
+    try {
+      // التحقق من صحة الإعدادات
+      if (!_validateNotificationConfig(notificationConfig)) {
+        return;
+      }
+
+      _ensureNotificationContainer();
+
+      // إنشاء عنصر الإشعار
+      const notificationElement = _createNotificationElement(notificationConfig);
+
+      // تحديد موقع الإشعار بناءً على الوضع
+      const position = notificationConfig.position || 'bottom-right';
+      const isTop = position.includes('top');
+      const isRight = position.includes('right');
+
+      if (notificationContainer && notificationContainer.children.length >= maxNotifications) {
+        // مسح الإشعار الأقدم
+        const oldest = notificationContainer.firstElementChild;
+        if (oldest) {
+          _removeNotification(oldest);
+        }
+      }
+
+      // إضافة الإشعار إلى الحاوية
+      if (isTop) {
+        notificationContainer.insertBefore(notificationElement, notificationContainer.firstChild);
+      } else {
+        notificationContainer.appendChild(notificationElement);
+      }
+
+      // تشغيل تحريك الدخول
+      requestAnimationFrame(() => {
+        notificationElement.classList.add('notification-show');
+        notificationElement.classList.remove('notification-enter');
+      });
+
+      // تشغيل تحريك الخروج بعد المدة المحددة
+      if (notificationConfig.duration > 0 && notificationConfig.duration !== Infinity) {
+        setTimeout(() => {
+          _removeNotification(notificationElement);
+        }, notificationConfig.duration);
+      }
+
+      activeNotifications.add(notificationElement);
+
+    } catch (error) {
+      console.error('[NotificationPresenter] خطأ في عرض الإشعار:', error);
     }
   }
 
   /**
-   * Removes a notification element from the DOM with an exit animation.
+   * إزالة إشعار مع تحريك
    * @private
-   * @param {HTMLElement} notificationElement - The notification element to remove.
+   * @param {HTMLElement} notificationElement - عنصر الإشعار
    */
   function _removeNotification(notificationElement) {
-    if (!notificationElement || !activeNotifications.has(notificationElement)) return;
+    if (!notificationElement || !activeNotifications.has(notificationElement)) {
+      return;
+    }
 
+    // تشغيل تحريك الخروج
     notificationElement.classList.remove('notification-show');
     notificationElement.classList.add('notification-exit');
 
-    // Remove the element after the animation completes
+    // إزالة العنصر بعد انتهاء التحريك
     const handleAnimationEnd = () => {
       if (notificationElement.parentNode) {
         notificationElement.parentNode.removeChild(notificationElement);
@@ -112,104 +201,407 @@ const notificationPresenter = (() => {
       activeNotifications.delete(notificationElement);
       notificationElement.removeEventListener('animationend', handleAnimationEnd);
     };
+
     notificationElement.addEventListener('animationend', handleAnimationEnd);
-    
-    // Fallback if animationend event doesn't fire (e.g., if display:none is used by animation)
+
+    // احتياطي في حالة عدم تشغيل التحريك
     setTimeout(() => {
-        if (document.body.contains(notificationElement)) { // Check if still in DOM
-             handleAnimationEnd(); // Manually trigger removal if still there
-        }
-    }, 500); // Match this to your CSS animation duration for exit
+      if (notificationContainer && notificationContainer.contains(notificationElement)) {
+        handleAnimationEnd();
+      }
+    }, 500);
   }
 
+  /**
+   * التحقق من صحة إعدادات الإشعار
+   * @private
+   * @param {NotificationConfig} config - إعدادات الإشعار
+   * @returns {boolean} true إذا كانت الإعدادات صحيحة
+   */
+  function _validateNotificationConfig(config) {
+    if (!config || typeof config !== 'object') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'إعدادات الإشعار غير صالحة.',
+        origin: 'NotificationPresenter._validateNotificationConfig'
+      });
+      return false;
+    }
+
+    if (!config.message || typeof config.message !== 'string') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'نص الإشعار مطلوب.',
+        origin: 'NotificationPresenter._validateNotificationConfig'
+      });
+      return false;
+    }
+
+    const validTypes = ['success', 'error', 'info', 'warning'];
+    if (config.type && !validTypes.includes(config.type)) {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: `نوع الإشعار غير صالح: ${config.type}`,
+        origin: 'NotificationPresenter._validateNotificationConfig'
+      });
+      return false;
+    }
+
+    if (config.duration !== undefined && (typeof config.duration !== 'number' || config.duration < 0)) {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'مدة الإشعار يجب أن تكون عددًا موجبًا.',
+        origin: 'NotificationPresenter._validateNotificationConfig'
+      });
+      return false;
+    }
+
+    return true;
+  }
 
   /**
-   * Handles the NOTIFICATION_REQUESTED event from the event aggregator.
+   * معالجة طلب الإشعار من محرك الأحداث
    * @private
-   * @param {object} notificationConfig - Configuration passed with the event.
+   * @param {NotificationConfig} notificationConfig - إعدادات الإشعار
    */
   function _handleNotificationRequest(notificationConfig) {
     if (notificationConfig && notificationConfig.message) {
       _showNotification(notificationConfig);
     } else {
-      (deps.errorLogger.logWarning || console.warn).call(deps.errorLogger, {
-        message: 'Received notification request with invalid config.',
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'طلب إشعار غير صالح.',
         origin: 'NotificationPresenter._handleNotificationRequest',
         context: { config: notificationConfig }
       });
     }
   }
-  
+
   /**
-   * Sets the dependencies for the notification presenter.
-   * @param {object} injectedDeps - { eventAggregator, errorLogger }
+   * التحقق من صحة الإعدادات
+   * @private
+   * @param {NotificationDependencies} injectedDeps - التبعيات المُدخلة
    */
   function _setDependencies(injectedDeps) {
-      if (injectedDeps.eventAggregator) deps.eventAggregator = injectedDeps.eventAggregator;
-      if (injectedDeps.errorLogger) deps.errorLogger = injectedDeps.errorLogger;
+    if (injectedDeps.eventAggregator) {
+      dependencies.eventAggregator = injectedDeps.eventAggregator;
+    }
+    if (injectedDeps.errorLogger) {
+      dependencies.errorLogger = injectedDeps.errorLogger;
+    }
+    if (injectedDeps.localizationService) {
+      dependencies.localizationService = injectedDeps.localizationService;
+    }
+  }
+
+  /**
+   * التحقق من وجود إشعار نشط
+   * @returns {boolean} true إذا كان هناك إشعار نشط
+   */
+  function hasActiveNotifications() {
+    return activeNotifications.size > 0;
+  }
+
+  /**
+   * إزالة كل الإشعارات
+   * @returns {number} عدد الإشعارات التي تم إزالتها
+   */
+  function dismissAllNotifications() {
+    const count = activeNotifications.size;
+    
+    if (count === 0) {
+      return 0;
+    }
+    
+    const notifications = Array.from(activeNotifications);
+    
+    notifications.forEach(notification => {
+      _removeNotification(notification);
+    });
+    
+    return count;
+  }
+
+  /**
+   * عرض إشعار نجاح
+   * @param {string} message - الرسالة
+   * @param {number} [duration=defaultNotificationDuration] - المدة
+   * @param {string} [position='bottom-right'] - الموقع
+   * @param {boolean} [rtl=false] - هل الإشعار يدعم RTL
+   * @param {string} [customClass=''] - فئة مخصصة
+   */
+  function showSuccess(message, duration = defaultNotificationDuration, position = 'bottom-right', rtl = false, customClass = '') {
+    if (!message || typeof message !== 'string') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'نص الإشعار مطلوب.',
+        origin: 'NotificationPresenter.showSuccess'
+      });
+      return;
+    }
+
+    _showNotification({
+      message,
+      type: 'success',
+      duration,
+      position,
+      rtl,
+      customClass
+    });
+  }
+
+  /**
+   * عرض إشعار خطأ
+   * @param {string} message - الرسالة
+   * @param {number} [duration=5000] - المدة
+   * @param {string} [position='bottom-right'] - الموقع
+   * @param {boolean} [rtl=false] - هل الإشعار يدعم RTL
+   * @param {string} [customClass=''] - فئة مخصصة
+   */
+  function showError(message, duration = 5000, position = 'bottom-right', rtl = false, customClass = '') {
+    if (!message || typeof message !== 'string') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'نص الإشعار مطلوب.',
+        origin: 'NotificationPresenter.showError'
+      });
+      return;
+    }
+
+    _showNotification({
+      message,
+      type: 'error',
+      duration,
+      position,
+      rtl,
+      customClass
+    });
+  }
+
+  /**
+   * عرض إشعار معلومات
+   * @param {string} message - الرسالة
+   * @param {number} [duration=defaultNotificationDuration] - المدة
+   * @param {string} [position='bottom-right'] - الموقع
+   * @param {boolean} [rtl=false] - هل الإشعار يدعم RTL
+   * @param {string} [customClass=''] - فئة مخصصة
+   */
+  function showInfo(message, duration = defaultNotificationDuration, position = 'bottom-right', rtl = false, customClass = '') {
+    if (!message || typeof message !== 'string') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'نص الإشعار مطلوب.',
+        origin: 'NotificationPresenter.showInfo'
+      });
+      return;
+    }
+
+    _showNotification({
+      message,
+      type: 'info',
+      duration,
+      position,
+      rtl,
+      customClass
+    });
+  }
+
+  /**
+   * عرض إشعار تحذيري
+   * @param {string} message - الرسالة
+   * @param {number} [duration=defaultNotificationDuration] - المدة
+   * @param {string} [position='bottom-right'] - الموقع
+   * @param {boolean} [rtl=false] - هل الإشعار يدعم RTL
+   * @param {string} [customClass=''] - فئة مخصصة
+   */
+  function showWarning(message, duration = defaultNotificationDuration, position = 'bottom-right', rtl = false, customClass = '') {
+    if (!message || typeof message !== 'string') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'نص الإشعار مطلوب.',
+        origin: 'NotificationPresenter.showWarning'
+      });
+      return;
+    }
+
+    _showNotification({
+      message,
+      type: 'warning',
+      duration,
+      position,
+      rtl,
+      customClass
+    });
+  }
+
+  /**
+   * عرض إشعار مع خيارات مخصصة
+   * @param {NotificationConfig} config - إعدادات الإشعار
+   */
+  function showCustomNotification(config) {
+    if (!config || !config.message) {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'إعدادات الإشعار غير صالحة.',
+        origin: 'NotificationPresenter.showCustomNotification'
+      });
+      return;
+    }
+
+    _showNotification(config);
+  }
+
+  /**
+   * إنشاء معرف فريد للإشعار
+   * @returns {string} المعرف الفريد
+   */
+  function generateUniqueId() {
+    return `notif-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  /**
+   * الحصول على نوع الإشعار
+   * @param {string} type - نوع الإشعار
+   * @returns {NotificationType} النوع المعالج
+   */
+  function getNotificationType(type) {
+    const validTypes = ['success', 'error', 'info', 'warning'];
+    return validTypes.includes(type) ? type : 'info';
+  }
+
+  /**
+   * التحقق من وجود إشعار معين
+   * @param {string} id - معرف الإشعار
+   * @returns {boolean} true إذا وُجد الإشعار
+   */
+  function isNotificationVisible(id) {
+    if (!id || typeof id !== 'string') return false;
+    
+    return Array.from(notificationContainer?.children || []).some(
+      el => el.id === id
+    );
+  }
+
+  /**
+   * إزالة إشعار معين
+   * @param {string} id - معرف الإشعار
+   * @returns {boolean} true إذا تم العثور على الإشعار وإزالته
+   */
+  function dismissNotification(id) {
+    if (!id || typeof id !== 'string') {
+      return false;
+    }
+
+    const notification = notificationContainer?.querySelector(`#${id}`);
+    
+    if (notification && activeNotifications.has(notification)) {
+      _removeNotification(notification);
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * عرض إشعار مع ترجمة
+   * @param {string} messageKey - مفتاح الترجمة
+   * @param {NotificationType} [type='info'] - نوع الإشعار
+   * @param {number} [duration=defaultNotificationDuration] - مدة العرض
+   * @param {string} [position='bottom-right'] - الموقع
+   * @param {boolean} [rtl=false] - هل يدعم RTL
+   * @param {string} [customClass=''] - فئة مخصصة
+   */
+  function showTranslatedNotification(messageKey, type = 'info', duration = defaultNotificationDuration, position = 'bottom-right', rtl = false, customClass = '') {
+    if (!messageKey || typeof messageKey !== 'string') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: 'مفتاح الترجمة مطلوب.',
+        origin: 'NotificationPresenter.showTranslatedNotification'
+      });
+      return;
+    }
+
+    const translatedMessage = dependencies.localizationService.translate(messageKey);
+    
+    if (!translatedMessage || typeof translatedMessage !== 'string') {
+      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+        message: `فشل في ترجمة الإشعار: ${messageKey}`,
+        origin: 'NotificationPresenter.showTranslatedNotification'
+      });
+      return;
+    }
+
+    _showNotification({
+      message: translatedMessage,
+      type,
+      duration,
+      position,
+      rtl,
+      customClass
+    });
+  }
+
+  /**
+   * إعداد الإشعارات
+   * @param {Object} injectedDeps - التبعيات المُدخلة
+   */
+  function _setDependencies(injectedDeps) {
+    if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
+    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
+    if (injectedDeps.localizationService) dependencies.localizationService = injectedDeps.localizationService;
+    
+    // الاشتراك في الأحداث إن لم يكن قد تم ذلك من قبل
+    if (dependencies.eventAggregator && !dependencies.eventAggregator.isSubscribed) {
+      dependencies.eventAggregator.subscribe(
+        'NOTIFICATION_REQUESTED',
+        _handleNotificationRequest
+      );
+    }
   }
 
   return {
-    _setDependencies, // Expose for initialization by moduleBootstrap
-    // Public method to directly show a notification if needed (though event-driven is preferred)
-    show: (message, type = 'info', duration = defaultNotificationDuration) => {
-      _showNotification({ message, type, duration });
-    },
-    showSuccess: (message, duration) => _showNotification({ message, type: 'success', duration }),
-    showError: (message, duration) => _showNotification({ message, type: 'error', duration }),
-    showInfo: (message, duration) => _showNotification({ message, type: 'info', duration }),
-    showWarning: (message, duration) => _showNotification({ message, type: 'warning', duration }),
+    _setDependencies,
+    show: showCustomNotification,
+    showSuccess,
+    showError,
+    showInfo,
+    showWarning,
+    showTranslatedNotification,
+    dismissNotification,
+    dismissAllNotifications,
+    hasActiveNotifications: () => activeNotifications.size > 0,
+    getNotificationType,
+    isNotificationVisible
   };
 })();
 
-
 /**
- * Initialization function for the NotificationPresenter, to be called by moduleBootstrap.
- * @param {object} dependencies
- * @param {import('../core/event-aggregator.js').default} dependencies.eventAggregator
- * @param {import('../core/error-logger.js').default} dependencies.errorLogger
+ * تهيئة مُقدّم الإشعارات
+ * @param {NotificationDependencies} dependencies - التبعيات
  */
-export function initializeNotificationPresenter(dependencies) {
-  notificationPresenter._setDependencies(dependencies);
-
-  if (dependencies.eventAggregator) {
-    // Listen for requests to show notifications
-    dependencies.eventAggregator.subscribe(
-      EVENTS.NOTIFICATION_REQUESTED,
-      notificationPresenter.show // Bind directly if show takes the config object
-                                 // Or use: (config) => notificationPresenter.show(config.message, config.type, config.duration)
-                                 // For more flexibility, show should take the config object directly
-                                 // Let's adjust _showNotification to handle direct config
-                                 // and the event handler too (DONE in _handleNotificationRequest)
-    );
-     // Subscribe the internal handler that expects the config object.
-    dependencies.eventAggregator.subscribe(
-        EVENTS.NOTIFICATION_REQUESTED,
-        (config) => { // The handler in _handleNotificationRequest is better as it's private to the module.
-            if (config && config.message) {
-                notificationPresenter.show(config.message, config.type, config.duration);
-            }
-        }
-    );
-
-    // console.info('[NotificationPresenter] Initialized and subscribed to notification requests.');
-  } else {
-    (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-        message: 'EventAggregator not provided to NotificationPresenter. Notifications via events will not work.',
-        origin: 'initializeNotificationPresenter'
-    });
+export function initializeNotificationPresenter(dependencies = {}) {
+  try {
+    console.info('[NotificationPresenter] تم تهيئته بنجاح');
+    
+    // جعل الإشعارات متاحة عالميًا لتسهيل التصحيح
+    if (typeof window !== 'undefined' && 
+        (typeof process === 'undefined' || process.env.NODE_ENV === 'development')) {
+      window.notificationPresenter = {
+        ...notificationPresenter
+      };
+    }
+    
+    // تعيين التبعيات
+    if (dependencies.eventAggregator || dependencies.errorLogger || dependencies.localizationService) {
+      notificationPresenter._setDependencies({
+        eventAggregator: dependencies.eventAggregator || {
+          subscribe: (event, handler) => {
+            window.addEventListener(event, handler);
+            return { unsubscribe: () => window.removeEventListener(event, handler) };
+          },
+          publish: (event, detail) => window.dispatchEvent(new CustomEvent(event, { detail }))
+        },
+        errorLogger: dependencies.errorLogger || console,
+        localizationService: dependencies.localizationService || { translate: (key) => key }
+      });
+    }
+    
+    return {
+      ...notificationPresenter
+    };
+  } catch (error) {
+    console.error('[NotificationPresenter] فشل في التهيئة:', error);
+    return {};
   }
-  
-  // Return the public API of the presenter (e.g., the `show` methods)
-  return {
-    show: notificationPresenter.show,
-    showSuccess: notificationPresenter.showSuccess,
-    showError: notificationPresenter.showError,
-    showInfo: notificationPresenter.showInfo,
-    showWarning: notificationPresenter.showWarning,
-  };
 }
 
-// For direct import and use if initialization is handled externally or not via moduleBootstrap for some reason.
-// However, event subscription relies on `initializeNotificationPresenter` being called with eventAggregator.
 export default notificationPresenter;
