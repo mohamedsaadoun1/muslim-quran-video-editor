@@ -1,283 +1,458 @@
 // js/features/quran-provider/quran.data.cache.js
-
-// quranApiClient will be injected
-// import quranApiClient from '../../services/quran.api.client.js';
 import { EVENTS } from '../../config/app.constants.js';
+import notificationPresenter from '../../shared-ui-components/notification.presenter.js';
 
+/**
+ * خدمة تخزين بيانات القرآن المؤقتة
+ */
 const quranDataCache = (() => {
-  // Internal cache storage
-  let surahsListCache = null; // Array of Surah objects: { number, name, englishName, numberOfAyahs, revelationType, ... }
-  let editionsCache = null; // Array of Edition objects from API: { identifier, language, name, format, type, ... }
-  let recitersCache = null; // Filtered from editionsCache
-  let translationsCache = null; // Filtered from editionsCache
-  let quranStructureCache = null; // { totalAyahs, surahs: [{number, numberOfAyahs, cumulativeAyahsStart}]}
-
-  // Cache for full Surah data (including ayahs text) if fetched
-  // Key: surahNumber, Value: Surah object with ayahs array
-  const fullSurahDataCache = new Map();
-
-
+  // تخزين البيانات
+  let surahsListCache = null;
+  let editionsCache = null;
+  let recitersCache = null;
+  let translationsCache = null;
+  let quranStructureCache = null;
+  let fullSurahDataCache = new Map();
+  
+  // الاعتمادات
   let dependencies = {
-    quranApiClient: { // Fallback/Mock
+    quranApiClient: {
       getAllSurahs: async () => [],
       getEditions: async () => [],
-      getSurahWithAyahs: async (num, ed) => ({ ayahs: [] }), // For fetching ayahs text of a surah
+      getSurahWithAyahs: async (num, ed) => ({ ayahs: [] })
     },
     errorLogger: console,
-    eventAggregator: { publish: () => {} },
-    // stateStore: { dispatch: () => {} }, // If managing loading states globally
+    eventAggregator: { publish: () => {} }
   };
-
-
-  /** Fetches and caches the list of all Surahs. @private */
+  
+  /**
+   * تحميل قائمة السور
+   * @private
+   * @returns {Promise<Array>} قائمة السور
+   */
   async function _loadSurahsListIfNeeded() {
     if (surahsListCache !== null) return surahsListCache;
-
-    // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: 'surahsList', loading: true });
+    
     try {
-      const surahs = await dependencies.quranApiClient.getAllSurahs(dependencies.errorLogger);
-      if (surahs && Array.isArray(surahs)) {
-        surahsListCache = surahs.sort((a, b) => a.number - b.number); // Ensure sorted
+      const surahs = await dependencies.quranApiClient.getAllSurahs();
+      
+      if (Array.isArray(surahs)) {
+        // التأكد من أن البيانات تحتوي على الحقول المطلوبة
+        surahsListCache = surahs
+          .filter(s => s.number && s.name && s.englishName && typeof s.numberOfAyahs === 'number')
+          .sort((a, b) => a.number - b.number);
+          
         dependencies.eventAggregator.publish(EVENTS.SURAH_LIST_LOADED, surahsListCache);
-        // console.debug('[QuranDataCache] Surahs list loaded and cached.');
+        
         return surahsListCache;
       }
-      throw new Error('Surahs data format from API is invalid.');
+      
+      throw new Error('تنسيق بيانات السور غير صالح');
     } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        error, message: 'Failed to load Surahs list.', origin: 'QuranDataCache._loadSurahsListIfNeeded'
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.surah.list.load') || 
+                 'فشل في تحميل قائمة السور',
+        origin: 'QuranDataCache._loadSurahsListIfNeeded'
       });
-      surahsListCache = []; // Cache empty array on error to prevent repeated failed attempts
+      
+      notificationPresenter.showNotification({
+        message: dependencies.localizationService.translate('error.surah.list.load') || 
+                 'فشل في تحميل قائمة السور',
+        type: 'error'
+      });
+      
+      surahsListCache = [];
       return [];
-    } finally {
-      // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: 'surahsList', loading: false });
-    }
-  }
-
-  /** Fetches and caches all available editions, then filters them. @private */
-  async function _loadEditionsIfNeeded() {
-    if (editionsCache !== null) return true; // Already loaded
-
-    // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: 'editions', loading: true });
-    try {
-      const editions = await dependencies.quranApiClient.getEditions({}, dependencies.errorLogger); // Empty options for all
-      if (editions && Array.isArray(editions)) {
-        editionsCache = editions;
-        recitersCache = editions.filter(ed => ed.format === 'audio' && ed.type === 'versebyverse'); // Common type for recitations
-        translationsCache = editions.filter(ed => ed.format === 'text' && (ed.type === 'translation' || ed.type === 'tafsir'));
-        
-        dependencies.eventAggregator.publish(EVENTS.RECITERS_LOADED, recitersCache); // Define these EVENTS
-        dependencies.eventAggregator.publish(EVENTS.TRANSLATIONS_LOADED, translationsCache);
-        // console.debug('[QuranDataCache] Editions loaded and cached. Reciters:', recitersCache.length, 'Translations:', translationsCache.length);
-        return true;
-      }
-      throw new Error('Editions data format from API is invalid.');
-    } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        error, message: 'Failed to load Quran editions.', origin: 'QuranDataCache._loadEditionsIfNeeded'
-      });
-      editionsCache = []; recitersCache = []; translationsCache = []; // Cache empty on error
-      return false;
-    } finally {
-      // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: 'editions', loading: false });
     }
   }
   
-  /** Fetches and caches Quran structure (surah names, ayah counts). @private */
-  async function _loadQuranStructureIfNeeded() {
-      if (quranStructureCache !== null) return quranStructureCache;
+  /**
+   * تحميل الإصدارات
+   * @private
+   * @returns {Promise<boolean>} هل تم التحميل؟
+   */
+  async function _loadEditionsIfNeeded() {
+    if (editionsCache !== null) return true;
+    
+    try {
+      const editions = await dependencies.quranApiClient.getEditions();
       
-      // Ensure Surah list is loaded first, as it contains numberOfAyahs
-      const surahs = await _loadSurahsListIfNeeded();
-      if (!surahs || surahs.length === 0) {
-          (dependencies.errorLogger.logWarning || console.warn)('Cannot build Quran structure without Surahs list.');
-          return null;
+      if (Array.isArray(editions)) {
+        editionsCache = editions;
+        recitersCache = editions.filter(ed => ed.format === 'audio' && ed.type === 'versebyverse');
+        translationsCache = editions.filter(ed => ed.format === 'text' && (ed.type === 'translation' || ed.type === 'tafsir'));
+        
+        dependencies.eventAggregator.publish(EVENTS.RECITERS_LOADED, recitersCache);
+        dependencies.eventAggregator.publish(EVENTS.TRANSLATIONS_LOADED, translationsCache);
+        
+        return true;
       }
-
-      try {
-          let cumulative = 0;
-          const structuredSurahs = surahs.map(s => {
-              const surahWithCumulative = {
-                  number: s.number,
-                  name: s.name, // Keep original Arabic name
-                  englishName: s.englishName,
-                  numberOfAyahs: s.numberOfAyahs,
-                  cumulativeAyahsStart: cumulative + 1
-              };
-              cumulative += s.numberOfAyahs;
-              return surahWithCumulative;
-          });
-          quranStructureCache = {
-              totalAyahs: cumulative,
-              surahs: structuredSurahs
-          };
-        //   console.debug('[QuranDataCache] Quran structure processed and cached.');
-          return quranStructureCache;
-      } catch(error) {
-        (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-            error, message: 'Failed to process Quran structure from Surahs list.',
-            origin: 'QuranDataCache._loadQuranStructureIfNeeded'
-        });
-        quranStructureCache = { totalAyahs: 0, surahs: [] }; // Cache empty structure on error
-        return null;
-      }
+      
+      throw new Error('تنسيق بيانات الإصدارات غير صالح');
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.editions.load') || 
+                 'فشل في تحميل إصدارات القرآن',
+        origin: 'QuranDataCache._loadEditionsIfNeeded'
+      });
+      
+      notificationPresenter.showNotification({
+        message: dependencies.localizationService.translate('error.editions.load') || 
+                 'فشل في تحميل إصدارات القرآن',
+        type: 'error'
+      });
+      
+      editionsCache = [];
+      recitersCache = [];
+      translationsCache = [];
+      return false;
+    }
   }
-
-
-  // --- Public API ---
+  
+  /**
+   * إنشاء بنية القرآن
+   * @private
+   * @returns {Promise<Object|null>} بنية القرآن
+   */
+  async function _loadQuranStructureIfNeeded() {
+    if (quranStructureCache !== null) return quranStructureCache;
+    
+    const surahs = await _loadSurahsListIfNeeded();
+    
+    if (!surahs || surahs.length === 0) {
+      dependencies.errorLogger.warn({
+        message: dependencies.localizationService.translate('warning.structure.surahs.missing') || 
+                 'تعذر إنشاء بنية القرآن بدون قائمة السور',
+        origin: 'QuranDataCache._loadQuranStructureIfNeeded'
+      });
+      
+      return null;
+    }
+    
+    try {
+      let cumulative = 0;
+      const structuredSurahs = surahs.map(s => {
+        const surahWithCumulative = {
+          number: s.number,
+          name: s.name,
+          englishName: s.englishName,
+          numberOfAyahs: s.numberOfAyahs,
+          cumulativeAyahsStart: cumulative + 1
+        };
+        
+        cumulative += s.numberOfAyahs;
+        return surahWithCumulative;
+      });
+      
+      quranStructureCache = {
+        totalAyahs: cumulative,
+        surahs: structuredSurahs
+      };
+      
+      return quranStructureCache;
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.structure.process') || 
+                 'فشل في معالجة بنية القرآن',
+        origin: 'QuranDataCache._loadQuranStructureIfNeeded'
+      });
+      
+      notificationPresenter.showNotification({
+        message: dependencies.localizationService.translate('error.structure.process') || 
+                 'فشل في معالجة بنية القرآن',
+        type: 'error'
+      });
+      
+      quranStructureCache = { totalAyahs: 0, surahs: [] };
+      return null;
+    }
+  }
+  
+  /**
+   * الحصول على قائمة السور
+   * @returns {Promise<Array>} قائمة السور
+   */
   async function getSurahsList() {
     return await _loadSurahsListIfNeeded();
   }
-
+  
+  /**
+   * الحصول على تفاصيل السورة
+   * @param {number} surahNumber - رقم السورة
+   * @param {boolean} [forceFetch=false] - هل يتم التحميل القسري؟
+   * @returns {Promise<Object|null>} تفاصيل السورة
+   */
   async function getSurahDetail(surahNumber, forceFetch = false) {
-    // Surah details (like numberOfAyahs) should already be in surahsListCache
-    // This method could be enhanced to fetch detailed info if surahsListCache only has basic data.
-    const surahs = await _loadSurahsListIfNeeded();
-    const surahInfo = surahs.find(s => s.number === surahNumber);
-    if (!surahInfo && forceFetch) {
-        // This would imply an API endpoint for a single surah's metadata, which Alquran.cloud's /meta gives all at once.
-        // The /surah/{number} endpoint fetches ayahs too.
-        // So, this 'forceFetch' might be for getSurahWithAyahsText instead.
-        (dependencies.errorLogger.logWarning || console.warn)({
-            message: `Surah detail for ${surahNumber} not in cache, and forceFetch for metadata-only not standard with this API.`,
-            origin: "QuranDataCache.getSurahDetail"
-        });
-        return null; // Or try to fetch /meta again
+    if (!forceFetch && surahsListCache && surahsListCache.length > 0) {
+      return surahsListCache.find(s => s.number === surahNumber) || null;
     }
-    return surahInfo || null;
+    
+    // في حالة عدم توفر البيانات أو التحميل القسري، استخدم API
+    const surahs = await _loadSurahsListIfNeeded();
+    return surahs.find(s => s.number === surahNumber) || null;
   }
-
+  
+  /**
+   * الحصول على آيات السورة
+   * @param {number} surahNumber - رقم السورة
+   * @param {string} [editionIdentifier='quran-uthmani'] - معرف الإصدار
+   * @param {boolean} [forceFetch=false] - هل يتم التحميل القسري؟
+   * @returns {Promise<Array>} آيات السورة
+   */
   async function getAyahsForSurah(surahNumber, editionIdentifier = 'quran-uthmani', forceFetch = false) {
     const cacheKey = `${surahNumber}-${editionIdentifier}`;
+    
     if (!forceFetch && fullSurahDataCache.has(cacheKey)) {
       return fullSurahDataCache.get(cacheKey).ayahs;
     }
-
-    // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: `surah_${surahNumber}_${editionIdentifier}`, loading: true });
+    
     try {
-      // quranApiClient.getSurahWithAyahs returns the full Surah object including ayahs.
-      const surahData = await dependencies.quranApiClient.getSurahWithAyahs(surahNumber, editionIdentifier, dependencies.errorLogger);
-      if (surahData && surahData.ayahs) {
-        fullSurahDataCache.set(cacheKey, surahData); // Cache the full surah data (name, englishName, ayahs, etc.)
-        // console.debug(`[QuranDataCache] Ayahs for Surah ${surahNumber} (Ed: ${editionIdentifier}) loaded and cached.`);
-        return surahData.ayahs; // Return only the ayahs array
+      const surahData = await dependencies.quranApiClient.getSurahWithAyahs(surahNumber, editionIdentifier);
+      
+      if (surahData && Array.isArray(surahData.ayahs)) {
+        fullSurahDataCache.set(cacheKey, surahData);
+        return surahData.ayahs;
       }
-      throw new Error(`Ayahs not found in response for Surah ${surahNumber}, Edition ${editionIdentifier}.`);
+      
+      throw new Error(`الآيات غير موجودة في الاستجابة للسورة ${surahNumber}`);
     } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        error, message: `Failed to load Ayahs for Surah ${surahNumber}, Edition ${editionIdentifier}.`,
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.verses.load', { 
+          surah: surahNumber, 
+          edition: editionIdentifier 
+        }) || 
+        `فشل في تحميل الآيات للسورة ${surahNumber}`,
         origin: 'QuranDataCache.getAyahsForSurah'
       });
-      return []; // Return empty array on error
-    } finally {
-      // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: `surah_${surahNumber}_${editionIdentifier}`, loading: false });
+      
+      notificationPresenter.showNotification({
+        message: dependencies.localizationService.translate('error.verses.load', { 
+          surah: surahNumber, 
+          edition: editionIdentifier 
+        }) || 
+        `فشل في تحميل الآيات للسورة ${surahNumber}`,
+        type: 'error'
+      });
+      
+      return [];
     }
   }
   
-  /** Returns full Surah data including text from cache or fetches it. */
+  /**
+   * الحصول على بيانات السورة الكاملة
+   * @param {number} surahNumber - رقم السورة
+   * @param {string} [editionIdentifier='quran-uthmani'] - معرف الإصدار
+   * @param {boolean} [forceFetch=false] - هل يتم التحميل القسري؟
+   * @returns {Promise<Object|null>} بيانات السورة
+   */
   async function getFullSurahData(surahNumber, editionIdentifier = 'quran-uthmani', forceFetch = false) {
     const cacheKey = `${surahNumber}-${editionIdentifier}`;
+    
     if (!forceFetch && fullSurahDataCache.has(cacheKey)) {
       return fullSurahDataCache.get(cacheKey);
     }
-     try {
-      const surahData = await dependencies.quranApiClient.getSurahWithAyahs(surahNumber, editionIdentifier, dependencies.errorLogger);
+    
+    try {
+      const surahData = await dependencies.quranApiClient.getSurahWithAyahs(surahNumber, editionIdentifier);
+      
       if (surahData && surahData.ayahs) {
         fullSurahDataCache.set(cacheKey, surahData);
         return surahData;
       }
-      throw new Error('Full surah data not found in response.');
-    } catch (error) { /* error handling as in getAyahsForSurah */ return null; }
+      
+      throw new Error('بيانات السورة غير موجودة في الاستجابة');
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.surah.data', { 
+          surah: surahNumber 
+        }) || 
+        `فشل في تحميل بيانات السورة ${surahNumber}`,
+        origin: 'QuranDataCache.getFullSurahData'
+      });
+      
+      notificationPresenter.showNotification({
+        message: dependencies.localizationService.translate('error.surah.data', { 
+          surah: surahNumber 
+        }) || 
+        `فشل في تحميل بيانات السورة ${surahNumber}`,
+        type: 'error'
+      });
+      
+      return null;
+    }
   }
-
-
+  
+  /**
+   * الحصول على القراء المتاحين
+   * @param {boolean} [forceRefetch=false] - هل يتم إعادة التحميل؟
+   * @returns {Promise<Array>} قائمة القراء
+   */
   async function getAvailableReciters(forceRefetch = false) {
-    if (forceRefetch) editionsCache = null; // Clear cache to force refetch
+    if (forceRefetch) {
+      editionsCache = null;
+      recitersCache = null;
+    }
+    
     await _loadEditionsIfNeeded();
     return recitersCache || [];
   }
-
+  
+  /**
+   * الحصول على الترجمات المتاحة
+   * @param {boolean} [forceRefetch=false] - هل يتم إعادة التحميل؟
+   * @returns {Promise<Array>} قائمة الترجمات
+   */
   async function getAvailableTranslations(forceRefetch = false) {
-    if (forceRefetch) editionsCache = null;
+    if (forceRefetch) {
+      editionsCache = null;
+      translationsCache = null;
+    }
+    
     await _loadEditionsIfNeeded();
     return translationsCache || [];
   }
-
+  
+  /**
+   * الحصول على بنية القرآن
+   * @returns {Promise<Object|null>} بنية القرآن
+   */
   async function getQuranStructure() {
-      return await _loadQuranStructureIfNeeded();
+    return await _loadQuranStructureIfNeeded();
   }
   
+  /**
+   * إزالة جميع البيانات من التخزين المؤقت
+   */
   function clearAllCaches() {
-      surahsListCache = null;
-      editionsCache = null;
-      recitersCache = null;
-      translationsCache = null;
-      quranStructureCache = null;
-      fullSurahDataCache.clear();
-      // console.info('[QuranDataCache] All caches cleared.');
+    surahsListCache = null;
+    editionsCache = null;
+    recitersCache = null;
+    translationsCache = null;
+    quranStructureCache = null;
+    fullSurahDataCache.clear();
+    
+    dependencies.eventAggregator.publish(EVENTS.CACHE_CLEARED, {
+      timestamp: Date.now()
+    });
+    
+    return {
+      status: 'cleared',
+      timestamp: Date.now()
+    };
   }
   
+  /**
+   * تعيين الاعتمادات
+   * @param {Object} injectedDeps - الاعتمادات
+   */
   function _setDependencies(injectedDeps) {
-    Object.assign(dependencies, injectedDeps);
+    Object.keys(injectedDeps).forEach(key => {
+      if (injectedDeps[key]) {
+        dependencies[key] = injectedDeps[key];
+      }
+    });
   }
-
-  // Public API
+  
   return {
     _setDependencies,
     getSurahsList,
-    getSurahDetail, // Primarily gets from cached surahs list, useful for numberOfAyahs
-    getAyahsForSurah, // Fetches ayahs (text) for a given surah and edition
-    getFullSurahData, // Fetches the entire surah object including ayahs and surah metadata
+    getSurahDetail,
+    getAyahsForSurah,
+    getFullSurahData,
     getAvailableReciters,
     getAvailableTranslations,
-    getQuranStructure, // For verse analyzer
-    clearAllCaches,
+    getQuranStructure,
+    clearAllCaches
   };
-})(); // IIFE removed.
-
+})();
 
 /**
- * Initialization function for the QuranDataCache.
- * @param {object} deps
- * @param {import('../../services/quran.api.client.js').default} deps.quranApiClient
- * @param {import('../../core/error-logger.js').default} deps.errorLogger
- * @param {import('../../core/event-aggregator.js').default} deps.eventAggregator
- * // @param {import('../../core/state-store.js').default} [deps.stateStore]
+ * وظيفة التهيئة
+ * @param {Object} deps - الاعتمادات
+ * @returns {Object} واجهة عامة للوحدة
  */
 export async function initializeQuranDataCache(deps) {
   quranDataCache._setDependencies(deps);
-  const { errorLogger } = deps;
-
-  // Preload essential data on app startup (optional, but often good for UX)
-  // Doing this in parallel.
-  // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: 'initialQuranData', loading: true });
+  
   try {
-    await Promise.all([
-      quranDataCache.getSurahsList(),       // Also populates quranStructure indirectly
-      quranDataCache.getAvailableReciters(), // Also populates translations
+    // تحميل البيانات الأساسية
+    const [surahs, recitersLoaded] = await Promise.all([
+      quranDataCache.getSurahsList(),
+      quranDataCache.getAvailableReciters()
     ]);
-    await quranDataCache.getQuranStructure(); // Ensure structure is built after surahs are loaded
-    // console.info('[QuranDataCache] Initial data (Surahs, Editions, Structure) preloaded.');
-  } catch (error) {
-    (errorLogger.handleError || console.error).call(errorLogger, {
-        error, message: "Failed to preload initial Quran data.",
-        origin: "initializeQuranDataCache"
+    
+    // التأكد من تحميل بنية القرآن
+    await quranDataCache.getQuranStructure();
+    
+    // إرسال حدث نجاح التهيئة
+    deps.eventAggregator.publish(EVENTS.DATA_CACHE_READY, {
+      surahCount: surahs.length,
+      recitersCount: recitersCache?.length || 0,
+      hasStructure: !!quranStructureCache
     });
-    // App can continue, but selectors might be slow or fail on first use until data loads.
-  } finally {
-    // dependencies.stateStore?.dispatch(ACTIONS.SET_DATA_LOADING, { key: 'initialQuranData', loading: false });
+    
+    return {
+      getSurahsList: quranDataCache.getSurahsList,
+      getSurahDetail: quranDataCache.getSurahDetail,
+      getAyahsForSurah: quranDataCache.getAyahsForSurah,
+      getFullSurahData: quranDataCache.getFullSurahData,
+      getAvailableReciters: quranDataCache.getAvailableReciters,
+      getAvailableTranslations: quranDataCache.getAvailableTranslations,
+      getQuranStructure: quranDataCache.getQuranStructure,
+      clearAllCaches: quranDataCache.clearAllCaches
+    };
+  } catch (error) {
+    deps.errorLogger.error({
+      error,
+      message: deps.localizationService.translate('error.initialization.data.cache') || 
+               'فشل في تهيئة تخزين بيانات القرآن',
+      origin: 'initializeQuranDataCache'
+    });
+    
+    notificationPresenter.showNotification({
+      message: deps.localizationService.translate('error.initialization.data.cache') || 
+               'فشل في تهيئة تخزين بيانات القرآن',
+      type: 'error'
+    });
+    
+    return {
+      getSurahsList: async () => [],
+      getSurahDetail: async () => null,
+      getAyahsForSurah: async () => [],
+      getFullSurahData: async () => null,
+      getAvailableReciters: async () => [],
+      getAvailableTranslations: async () => [],
+      getQuranStructure: async () => null,
+      clearAllCaches: quranDataCache.clearAllCaches
+    };
   }
+}
 
-  // Return the public API of the cache service.
-  return {
-    getSurahsList: quranDataCache.getSurahsList,
-    getSurahDetail: quranDataCache.getSurahDetail,
-    getAyahsForSurah: quranDataCache.getAyahsForSurah,
-    getFullSurahData: quranDataCache.getFullSurahData,
-    getAvailableReciters: quranDataCache.getAvailableReciters,
-    getAvailableTranslations: quranDataCache.getAvailableTranslations,
-    getQuranStructure: quranDataCache.getQuranStructure,
-    clearAllCaches: quranDataCache.clearAllCaches,
+/**
+ * تعيين مهلة للتخزين المؤقت
+ * @param {Function} callback - الوظيفة التي سيتم تنفيذها
+ * @param {number} [timeout=30000] - مهلة التنفيذ بالمللي ثانية
+ * @returns {Function} وظيفة مع مهلة
+ */
+export function withCacheTimeout(callback, timeout = 30000) {
+  return async function(...args) {
+    const cacheTimeout = setTimeout(() => {
+      throw new Error('تجاوزت مهلة التخزين المؤقت');
+    }, timeout);
+    
+    try {
+      const result = await callback(...args);
+      clearTimeout(cacheTimeout);
+      return result;
+    } catch (error) {
+      clearTimeout(cacheTimeout);
+      throw error;
+    }
   };
 }
 
