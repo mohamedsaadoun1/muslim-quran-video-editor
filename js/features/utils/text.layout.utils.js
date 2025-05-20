@@ -1,258 +1,393 @@
 // js/utils/text.layout.utils.js
 
 /**
- * Wraps text to fit within a maximum width on a canvas, breaking into multiple lines.
- * This is a basic implementation and might need refinement for complex scripts or hyphenation.
- * For Arabic, splitting by space and then by character (if a word is too long) is a simple start.
+ * @typedef {Object} TextLayoutOptions
+ * @property {string} [font] - Font string (e.g., '16px Arial').
+ * @property {string} [fillStyle='black'] - Fill color for text.
+ * @property {string} [strokeStyle='transparent'] - Stroke color for text.
+ * @property {number} [lineWidth=1] - Stroke line width.
+ * @property {'center'|'left'|'right'|'start'|'end'} [textAlign='start'] - Horizontal alignment of text.
+ *           Note: For RTL, 'start' aligns right, 'end' aligns left.
+ * @property {'top'|'middle'|'bottom'|'alphabetic'|'hanging'|'ideographic'} [textBaseline='alphabetic'] - Vertical baseline for drawing text.
+ * @property {'top'|'middle'|'bottom'} [verticalAlign='middle'] - Vertical alignment of the entire text block.
+ * @property {string} [textBlockBgColor='transparent'] - Background color for the text block.
+ * @property {number} [textBlockPadding=0] - Padding around the text block.
+ * @property {number} [cornerRadius=0] - Corner radius for the text block background (if supported by ctx.roundRect).
+ * @property {boolean} [rtl=false] - Whether text rendering should be right-to-left.
+ * @property {number} [maxCharWidthFallback=0] - Fallback for character width if measureText is not precise, used for RTL character-by-character wrapping.
+ * @property {number} [lineHeight] - Explicit line height. If not provided, it's calculated.
+ */
+
+/**
+ * @typedef {Object} TextMetricsResult
+ * @property {number} width - Text width in pixels.
+ * @property {number} height - Text height in pixels (based on font metrics or calculated line height).
+ * @property {number} actualBoundingBoxAscent - Font ascent from the baseline.
+ * @property {number} actualBoundingBoxDescent - Font descent from the baseline.
+ * @property {number} [fontBoundingBoxAscent] - Fallback ascent if actual is not available.
+ * @property {number} [fontBoundingBoxDescent] - Fallback descent if actual is not available.
+ * @property {number} fontSize - Detected or default font size in pixels.
+ * @property {number} calculatedLineHeight - The line height used or calculated.
+ */
+
+/**
+ * @typedef {Object} WrappedTextResult
+ * @property {string[]} lines - Array of wrapped text lines.
+ * @property {number} width - Maximum width of any single line.
+ * @property {number} height - Total height of the wrapped text block (lines.length * lineHeight).
+ * @property {number} lineHeight - The line height used for wrapping.
+ * @property {Object} [boundingBox] - Optional bounding box of the drawn text block if padding/background is applied.
+ * @property {number} boundingBox.x
+ * @property {number} boundingBox.y
+ * @property {number} boundingBox.width
+ * @property {number} boundingBox.height
+ */
+
+
+/**
+ * Calculates an estimated line height based on font metrics.
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {string} [sampleText='Mg'] - Sample text for measurement (contains ascenders and descenders).
+ * @returns {number} Estimated line height.
+ * @private
+ */
+function _calculateLineHeight(ctx, sampleText = 'Mgي') {
+    const metrics = ctx.measureText(sampleText);
+    let height = 0;
+    if (metrics.actualBoundingBoxAscent && metrics.actualBoundingBoxDescent) {
+        height = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    } else if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+        height = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
+    } else {
+        const fontSizeMatch = ctx.font.match(/(\d+)(px|pt|em|rem)/);
+        const fontSize = fontSizeMatch ? parseInt(fontSizeMatch[1], 10) : 16; // Default to 16px if not found
+        height = fontSize * 1.2; // Common fallback multiplier
+    }
+    return Math.max(height, 1); // Ensure positive line height
+}
+
+/**
+ * Measures text dimensions using the current canvas context settings.
+ * Provides more detailed metrics including calculated line height.
  *
- * @param {CanvasRenderingContext2D} ctx - The canvas rendering context.
- * @param {string} text - The text string to wrap.
- * @param {number} x - The x-coordinate for the starting point of the text (usually for horizontal centering or left alignment).
- * @param {number} y - The y-coordinate for the baseline of the *first* line of text.
- * @param {number} maxWidth - The maximum width the text should occupy.
- * @param {number} lineHeight - The height of each line (affects spacing between lines).
- * @param {object} [options={}] - Additional options.
- * @param {'center' | 'left' | 'right'} [options.textAlign='center'] - Horizontal alignment of each line.
- * @param {'top' | 'middle' | 'bottom'} [options.verticalAlign='middle'] - Vertical alignment of the entire text block.
- * @returns {Array<string>} An array of strings, where each string is a line of wrapped text. (Does not draw)
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {string} text - Text to measure.
+ * @param {TextLayoutOptions} [options={}] - Optional layout options (font, rtl can be set).
+ * @returns {TextMetricsResult} Object with text dimensions.
+ * @throws {Error} If inputs are invalid.
+ */
+export function measureText(ctx, text, options = {}) {
+    if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) {
+        throw new Error('measureText requires a valid CanvasRenderingContext2D');
+    }
+    if (typeof text !== 'string') {
+        throw new Error('measureText requires text to be a string');
+    }
+
+    const settings = { ...options };
+    const originalFont = ctx.font;
+    const originalDirection = ctx.direction;
+
+    if (settings.font) ctx.font = settings.font;
+    if (settings.rtl) ctx.direction = 'rtl';
+    else if (settings.rtl === false) ctx.direction = 'ltr'; // Explicitly set LTR if false
+
+    const metrics = ctx.measureText(text);
+    const fontSizeMatch = ctx.font.match(/(\d+)(px|pt|em|rem)/);
+    const fontSize = fontSizeMatch ? parseInt(fontSizeMatch[1], 10) : 16;
+    const calculatedLineHeight = settings.lineHeight || _calculateLineHeight(ctx, text);
+
+    // Restore context
+    ctx.font = originalFont;
+    ctx.direction = originalDirection;
+
+    return {
+        width: metrics.width,
+        height: calculatedLineHeight, // Use calculated line height for single line text height
+        actualBoundingBoxAscent: metrics.actualBoundingBoxAscent || (calculatedLineHeight * 0.75), // Estimate if not available
+        actualBoundingBoxDescent: metrics.actualBoundingBoxDescent || (calculatedLineHeight * 0.25), // Estimate if not available
+        fontBoundingBoxAscent: metrics.fontBoundingBoxAscent,
+        fontBoundingBoxDescent: metrics.fontBoundingBoxDescent,
+        fontSize: fontSize,
+        calculatedLineHeight: calculatedLineHeight
+    };
+}
+
+
+/**
+ * Wraps text to fit within a maximum width on a canvas.
+ * Handles basic RTL by splitting words, for more complex scripts use with caution or specific logic.
+ *
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {string} text - Text to wrap.
+ * @param {number} maxWidth - Maximum width for each line.
+ * @param {TextLayoutOptions} [options={}] - Additional wrapping options (rtl, font).
+ * @returns {string[]} Array of wrapped text lines.
+ * @throws {Error} If inputs are invalid.
  */
 export function getTextLinesForWrapping(ctx, text, maxWidth, options = {}) {
-  if (!ctx || !text || typeof text !== 'string' || maxWidth <= 0) {
-    return [text || '']; // Return original text as a single line if params are invalid
-  }
+    if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) {
+        throw new Error('getTextLinesForWrapping requires a valid CanvasRenderingContext2D');
+    }
+    if (typeof text !== 'string') {
+        throw new Error('getTextLinesForWrapping requires text to be a string');
+    }
+    if (typeof maxWidth !== 'number' || maxWidth <= 0) {
+        throw new Error('getTextLinesForWrapping requires a positive maxWidth');
+    }
 
-  const lines = [];
-  // For Arabic and similar scripts, splitting individual characters might break ligatures.
-  // A better approach for complex scripts involves word-level splitting first.
-  // This regex tries to split by spaces OR before/after common punctuation for better word boundaries.
-  // Or by individual characters if a "word" (non-space sequence) is too long.
+    const settings = { rtl: false, maxCharWidthFallback: 0, ...options };
+    const originalFont = ctx.font;
+    const originalDirection = ctx.direction;
 
-  // Let's refine word splitting logic:
-  // 1. Split by explicit newlines first.
-  const paragraphs = text.split('\n');
-  
-  for (const paragraph of paragraphs) {
-    const words = paragraph.split(/\s+/); // Split by one or more spaces
-    let currentLine = '';
+    if (settings.font) ctx.font = settings.font;
+    if (settings.rtl) ctx.direction = 'rtl';
+    else if (settings.rtl === false) ctx.direction = 'ltr';
 
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
-      let testLine = currentLine ? `${currentLine} ${word}` : word;
-      let metrics = ctx.measureText(testLine);
 
-      if (metrics.width > maxWidth && currentLine !== '') {
-        // Current line (without the new word) is ready
-        lines.push(currentLine);
-        currentLine = word; // Start new line with the current word
-        // If this single word is still too long, we need to break it
-        metrics = ctx.measureText(currentLine); // Measure the single word
-        if (metrics.width > maxWidth) {
-          // Character-by-character breaking for a very long word
-          let tempWordLine = '';
-          for (let j = 0; j < word.length; j++) {
-            const char = word[j];
-            const testCharLine = tempWordLine + char;
-            if (ctx.measureText(testCharLine).width > maxWidth && tempWordLine !== '') {
-              lines.push(tempWordLine);
-              tempWordLine = char;
-            } else {
-              tempWordLine = testCharLine;
-            }
-          }
-          currentLine = tempWordLine; // The remainder of the word becomes the new current line
+    const lines = [];
+    const paragraphs = text.split('\n');
+
+    for (const paragraph of paragraphs) {
+        if (isEmptyOrWhitespace(paragraph)) {
+            lines.push('');
+            continue;
         }
-      } else {
-        currentLine = testLine; // Add word to current line
-      }
-    }
-    if (currentLine.trim() !== '') {
-      lines.push(currentLine);
-    }
-  }
-  return lines.length > 0 ? lines : ['']; // Ensure at least one empty line if text was empty
-}
 
+        // For RTL, if maxCharWidthFallback is set, try char-by-char for words that overflow.
+        // Otherwise, basic word splitting.
+        const words = settings.rtl ? paragraph.split(/(\s+)/).filter(w => w.trim().length > 0) : paragraph.split(/\s+/);
+        let currentLine = '';
 
-/**
- * Draws wrapped text on the canvas.
- * Uses getTextLinesForWrapping to get the lines first.
- * @param {CanvasRenderingContext2D} ctx - The canvas rendering context.
- * @param {string} text - The text string to wrap and draw.
- * @param {number} x - The x-coordinate (behavior depends on textAlign).
- * @param {number} y - The y-coordinate (behavior depends on verticalAlign for the block, and textBaseline for individual lines).
- * @param {number} maxWidth - The maximum width the text should occupy.
- * @param {number} lineHeight - The height of each line.
- * @param {object} [options={}] - Additional options.
- * @param {string} [options.fillStyle] - Text color (overrides ctx.fillStyle if provided).
- * @param {string} [options.font] - Font string (overrides ctx.font if provided).
- * @param {'center' | 'left' | 'right' | 'start' | 'end'} [options.textAlign='center'] - Horizontal alignment of each line. Default for canvas context is 'start'.
- * @param {'top' | 'middle' | 'bottom' | 'alphabetic' | 'hanging' | 'ideographic'} [options.textBaseline='middle'] - Vertical baseline for drawing each line. Default is 'alphabetic'.
- * @param {string} [options.textBlockBgColor] - Optional background color for the entire text block.
- * @param {number} [options.textBlockPadding=0] - Optional padding around the text block if bgColor is used.
- */
-export function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
-  if (!ctx || !text || typeof text !== 'string' || maxWidth <= 0 || lineHeight <= 0) {
-    return;
-  }
+        for (let i = 0; i < words.length; i++) {
+            const word = words[i];
+            if (!word) continue;
 
-  const originalFillStyle = ctx.fillStyle;
-  const originalFont = ctx.font;
-  const originalTextAlign = ctx.textAlign;
-  const originalTextBaseline = ctx.textBaseline;
+            const testLine = currentLine ? (settings.rtl ? `${word} ${currentLine}` : `${currentLine} ${word}`) : word;
+            const metrics = ctx.measureText(testLine);
 
-  if (options.font) ctx.font = options.font;
-  if (options.fillStyle) ctx.fillStyle = options.fillStyle;
-  
-  // Set textAlign and textBaseline for the drawing operations.
-  // Canvas default textAlign is 'start', default textBaseline is 'alphabetic'.
-  ctx.textAlign = options.textAlign || 'center';
-  ctx.textBaseline = options.textBaseline || 'middle';
-
-
-  const lines = getTextLinesForWrapping(ctx, text, maxWidth, options);
-  const totalTextBlockHeight = lines.length * lineHeight;
-  
-  let startY;
-  // Adjust startY based on desired vertical alignment of the whole text block.
-  // `y` parameter is treated as the reference point for this alignment.
-  switch (options.verticalAlign) {
-    case 'top':
-      startY = y;
-      break;
-    case 'bottom':
-      startY = y - totalTextBlockHeight + lineHeight; // Adjust so last baseline is at y
-      break;
-    case 'middle':
-    default:
-      startY = y - totalTextBlockHeight / 2 + lineHeight / 2; // Center the block around y
-      break;
-  }
-
-  // Optional: Draw background for the entire text block
-  if (options.textBlockBgColor && options.textBlockBgColor !== 'transparent') {
-    // Calculate bounding box of all lines for the background
-    let maxLineWidth = 0;
-    lines.forEach(line => {
-      maxLineWidth = Math.max(maxLineWidth, ctx.measureText(line).width);
-    });
-
-    const padding = options.textBlockPadding || 0;
-    let bgX = x;
-    if (ctx.textAlign === 'center') {
-      bgX = x - (maxLineWidth / 2) - padding;
-    } else if (ctx.textAlign === 'right' || ctx.textAlign === 'end') {
-      bgX = x - maxLineWidth - padding;
-    } else { // left or start
-      bgX = x - padding;
-    }
-    // Adjust bgY based on verticalAlign and textBaseline for accurate positioning.
-    // This is a simplified Y for background:
-    let bgY = startY - (ctx.textBaseline === 'middle' ? lineHeight / 2 : (ctx.textBaseline === 'bottom' ? lineHeight : 0)) - padding;
-    if (options.verticalAlign === 'middle') {
-      bgY = y - (totalTextBlockHeight / 2) - padding;
-    } else if (options.verticalAlign === 'top') {
-        bgY = y - padding;
-        if (ctx.textBaseline === 'middle') bgY += lineHeight/2 - (lineHeight * (1 - 0.8) / 2) // Approx adjustment for middle baseline visual center
-        // Complex adjustments for other baselines are tricky. For simplicity, using `alphabetic` as ref is often easier.
-    } else if (options.verticalAlign === 'bottom') {
-        bgY = y - totalTextBlockHeight - padding;
-         if (ctx.textBaseline === 'middle') bgY += lineHeight/2 + (lineHeight * (1-0.8) / 2)
+            if (metrics.width > maxWidth && currentLine.length > 0) {
+                // Word itself is too long, attempt character wrapping if RTL and fallback is enabled
+                if (settings.rtl && settings.maxCharWidthFallback > 0 && ctx.measureText(word).width > maxWidth) {
+                    lines.push(currentLine); // Push previous line
+                    currentLine = ''; // Reset current line
+                    let tempWordLine = '';
+                    for (const char of word) {
+                        const testCharLine = tempWordLine + char;
+                        if (ctx.measureText(testCharLine).width > maxWidth && tempWordLine) {
+                            lines.push(tempWordLine);
+                            tempWordLine = char;
+                        } else {
+                            tempWordLine = testCharLine;
+                        }
+                    }
+                    if (tempWordLine) lines.push(tempWordLine); // Push remaining part of the word
+                    continue; // Move to next word
+                } else if (ctx.measureText(word).width > maxWidth) { // LTR or RTL without char wrap for long word
+                     lines.push(currentLine); // Push the line before the long word
+                     // For very long words in LTR, break them by character
+                     let charLine = '';
+                     for (const char of word) {
+                         const testCharLine = charLine + char;
+                         if (ctx.measureText(testCharLine).width > maxWidth && charLine.length > 0) {
+                             lines.push(charLine);
+                             charLine = char;
+                         } else {
+                             charLine = testCharLine;
+                         }
+                     }
+                     currentLine = charLine; // The remainder of the long word becomes the new current line
+                } else { // Normal case: line overflows, start new line with current word
+                    lines.push(currentLine);
+                    currentLine = word;
+                }
+            } else {
+                currentLine = testLine;
+            }
+        }
+        if (!isEmptyOrWhitespace(currentLine)) {
+            lines.push(currentLine);
+        }
     }
 
-
-    const bgWidth = maxLineWidth + (padding * 2);
-    const bgHeight = totalTextBlockHeight + (padding * 2);
-
-    const prevFill = ctx.fillStyle;
-    ctx.fillStyle = options.textBlockBgColor;
-    ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
-    ctx.fillStyle = options.fillStyle || originalFillStyle; // Restore text fillStyle
-  }
-
-
-  // Draw each line
-  let currentY = startY;
-  lines.forEach(line => {
-    let lineX = x; // Default for 'start', 'left', or 'center' (where x is the center point)
-    if (ctx.textAlign === 'right' || ctx.textAlign === 'end') {
-        // If right aligned, x is the right-most point.
-        // fillText for 'right' or 'end' uses x as the right boundary.
-        lineX = x;
-    } else if (ctx.textAlign === 'left' || ctx.textAlign === 'start') {
-        // x is the left-most point.
-        lineX = x;
-    } else if (ctx.textAlign === 'center') {
-        // x is the center point.
-        lineX = x;
-    }
-    ctx.fillText(line, lineX, currentY);
-    currentY += lineHeight;
-  });
-
-  // Restore original context state
-  ctx.fillStyle = originalFillStyle;
-  ctx.font = originalFont;
-  ctx.textAlign = originalTextAlign;
-  ctx.textBaseline = originalTextBaseline;
-}
-
-
-/**
- * Measures the dimensions of a text string if it were rendered with the current
- * canvas context settings (or specified font).
- * Note: For multiline text, this measures a single, unbroken line of that text.
- * To get dimensions of wrapped text, use `getTextLinesForWrapping` then measure each line or the total block.
- *
- * @param {CanvasRenderingContext2D} ctx - The canvas rendering context.
- * @param {string} text - The text string to measure.
- * @param {string} [fontStyle] - Optional. CSS font string (e.g., "20px Arial"). If provided, it's temporarily set on context.
- * @returns {TextMetrics | {width:number, height:number}} TextMetrics object or a simple width/height for older compatibility.
- *          TextMetrics includes: width, actualBoundingBoxAscent, actualBoundingBoxDescent, etc.
- *          Height is approximated if detailed metrics are not available.
- */
-export function measureTextOnCanvas(ctx, text, fontStyle) {
-  if (!ctx || !text) return { width: 0, height: 0, actualBoundingBoxAscent:0, actualBoundingBoxDescent:0 };
-
-  const originalFont = ctx.font;
-  if (fontStyle) {
-    ctx.font = fontStyle;
-  }
-
-  const metrics = ctx.measureText(text);
-
-  // Approximate height based on font size if detailed metrics are missing
-  // 'actualBoundingBoxAscent' and 'actualBoundingBoxDescent' are more accurate for height.
-  let approximateHeight = 0;
-  if (metrics.actualBoundingBoxAscent && metrics.actualBoundingBoxDescent) {
-      approximateHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-  } else if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) { // Fallback
-      approximateHeight = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
-  } else {
-      // Very rough approximation if no bounding box metrics: try to parse font size
-      const fontSizeMatch = ctx.font.match(/(\d+)(px|pt|em|rem)/);
-      if (fontSizeMatch && fontSizeMatch[1]) {
-          approximateHeight = parseInt(fontSizeMatch[1], 10) * 1.2; // Assume 1.2 line height factor
-      } else {
-          approximateHeight = 12 * 1.2; // Default fallback if cannot parse
-      }
-  }
-  
-  // Restore original font if it was changed
-  if (fontStyle) {
     ctx.font = originalFont;
-  }
-
-  return {
-      width: metrics.width,
-      height: approximateHeight, // This is an approximation
-      actualBoundingBoxAscent: metrics.actualBoundingBoxAscent || approximateHeight * 0.8, // approx
-      actualBoundingBoxDescent: metrics.actualBoundingBoxDescent || approximateHeight * 0.2, // approx
-      // You can expose other metrics if needed
-      // fontBoundingBoxAscent: metrics.fontBoundingBoxAscent,
-      // fontBoundingBoxDescent: metrics.fontBoundingBoxDescent,
-  };
+    ctx.direction = originalDirection;
+    return lines.length > 0 ? lines : [''];
 }
 
+/**
+ * Draws wrapped text on the canvas with layout options.
+ *
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {string} text - Text to draw.
+ * @param {number} x - X coordinate for the text block's reference point.
+ * @param {number} y - Y coordinate for the text block's reference point.
+ * @param {number} maxWidth - Maximum width for each text line.
+ * @param {TextLayoutOptions} [options={}] - Additional drawing options.
+ * @returns {WrappedTextResult} Object containing dimensions of the drawn text block.
+ * @throws {Error} If inputs are invalid.
+ */
+export function drawWrappedText(ctx, text, x, y, maxWidth, options = {}) {
+    if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) {
+        throw new Error('drawWrappedText requires a valid CanvasRenderingContext2D');
+    }
+    if (typeof text !== 'string') {
+        throw new Error('drawWrappedText requires text to be a string');
+    }
+    if (typeof x !== 'number' || typeof y !== 'number') {
+        throw new Error('drawWrappedText requires x and y to be numbers');
+    }
+    if (typeof maxWidth !== 'number' || maxWidth <= 0) {
+        throw new Error('drawWrappedText requires a positive maxWidth');
+    }
 
-// This module exports utility functions directly.
-// No `initialize...` function needed from moduleBootstrap.
+    const settings = {
+        font: ctx.font, // Default to current context font
+        fillStyle: ctx.fillStyle,
+        strokeStyle: ctx.strokeStyle,
+        lineWidth: ctx.lineWidth,
+        textAlign: 'start', // Canvas default, maps to left/right based on direction
+        textBaseline: 'alphabetic',
+        verticalAlign: 'middle',
+        textBlockBgColor: 'transparent',
+        textBlockPadding: 0,
+        cornerRadius: 0,
+        rtl: false,
+        ...options
+    };
+
+    ctx.save();
+
+    // Apply context settings
+    ctx.font = settings.font;
+    ctx.fillStyle = settings.fillStyle;
+    ctx.strokeStyle = settings.strokeStyle;
+    ctx.lineWidth = settings.lineWidth;
+    ctx.textAlign = settings.textAlign;
+    ctx.textBaseline = settings.textBaseline;
+    if (settings.rtl) ctx.direction = 'rtl';
+    else if (settings.rtl === false) ctx.direction = 'ltr';
+
+
+    const lineHeight = settings.lineHeight || _calculateLineHeight(ctx, text.substring(0, 100)); // Use sample for calculation
+    const lines = getTextLinesForWrapping(ctx, text, maxWidth, settings);
+    const lineCount = lines.length;
+    const padding = settings.textBlockPadding;
+
+    let maxLineWidth = 0;
+    if (lineCount > 0) {
+        for (const line of lines) {
+            maxLineWidth = Math.max(maxLineWidth, ctx.measureText(line).width);
+        }
+    } else { // Handle empty text case
+        maxLineWidth = 0;
+    }
+
+
+    const totalTextHeight = (lineCount > 0 ? (lineCount -1) * lineHeight : 0) + (lineCount > 0 ? _calculateLineHeight(ctx, lines[0] || 'M') : 0);
+
+
+    // Determine text block's top-left corner (actualX, actualY) for background and text positioning
+    let actualX = x;
+    let actualY = y; // This 'y' is the reference point for verticalAlign
+
+    // Adjust actualX based on textAlign and RTL
+    if (settings.textAlign === 'center') {
+        actualX = x - (maxLineWidth / 2);
+    } else if (settings.textAlign === 'right' || (settings.textAlign === 'end' && settings.rtl) || (settings.textAlign === 'start' && !settings.rtl && ctx.direction === 'rtl')) {
+        actualX = x - maxLineWidth;
+    } else { // left, start (LTR), end (LTR)
+        actualX = x;
+    }
+
+
+    // Adjust actualY based on verticalAlign
+    if (settings.verticalAlign === 'top') {
+        actualY = y;
+    } else if (settings.verticalAlign === 'bottom') {
+        actualY = y - totalTextHeight;
+    } else { // middle
+        actualY = y - totalTextHeight / 2;
+    }
+
+    const blockX = actualX - padding;
+    const blockY = actualY - padding;
+    const blockWidth = maxLineWidth + padding * 2;
+    const blockHeight = totalTextHeight + padding * 2;
+
+    // Draw background
+    if (settings.textBlockBgColor && settings.textBlockBgColor !== 'transparent') {
+        ctx.fillStyle = settings.textBlockBgColor;
+        if (ctx.roundRect && settings.cornerRadius > 0) {
+            ctx.beginPath();
+            ctx.roundRect(blockX, blockY, blockWidth, blockHeight, settings.cornerRadius);
+            ctx.fill();
+        } else {
+            ctx.fillRect(blockX, blockY, blockWidth, blockHeight);
+        }
+        ctx.fillStyle = settings.fillStyle; // Restore text fillStyle
+    }
+
+    // Draw text lines
+    // Text drawing X position needs to align with the block's content area start
+    let textDrawX = actualX;
+     if (settings.textAlign === 'center') {
+        textDrawX = x; // textAlign handles centering relative to this x
+    } else if (settings.textAlign === 'right' || (settings.textAlign === 'end' && settings.rtl) || (settings.textAlign === 'start' && !settings.rtl && ctx.direction === 'rtl')) {
+        textDrawX = x; // textAlign handles right/end alignment relative to this x
+    } else { // left, start (LTR), end (LTR)
+        textDrawX = actualX;
+    }
+
+
+    let currentYOffset = 0;
+    // Adjust for textBaseline when drawing
+    if (settings.textBaseline === 'top' || settings.textBaseline === 'hanging') {
+        currentYOffset = 0;
+    } else if (settings.textBaseline === 'middle') {
+        currentYOffset = lineHeight / 2;
+    } else if (settings.textBaseline === 'bottom' || settings.textBaseline === 'ideographic') {
+        currentYOffset = lineHeight;
+    } else { // alphabetic (default)
+        // For alphabetic, the drawing Y is the baseline.
+        // If actualY is the top of the text block, we need to add ascent.
+        // This is complex. Simpler: assume actualY is where the first line's baseline should effectively start for block alignment.
+        const firstLineMetrics = measureText(ctx, lines[0] || "M", settings);
+        currentYOffset = firstLineMetrics.actualBoundingBoxAscent;
+    }
+
+
+    for (let i = 0; i < lineCount; i++) {
+        const line = lines[i];
+        const lineYPos = actualY + currentYOffset + (i * lineHeight);
+        ctx.fillText(line, textDrawX, lineYPos);
+        if (settings.strokeStyle && settings.strokeStyle !== 'transparent' && settings.lineWidth > 0) {
+            ctx.strokeText(line, textDrawX, lineYPos);
+        }
+    }
+
+    ctx.restore();
+
+    return {
+        lines: lines,
+        width: maxLineWidth,
+        height: totalTextHeight,
+        lineHeight: lineHeight,
+        boundingBox: {
+            x: blockX,
+            y: blockY,
+            width: blockWidth,
+            height: blockHeight,
+        }
+    };
+}
+
+/**
+ * Helper function to check if a string is empty or contains only whitespace.
+ * @param {string} str - The string to check.
+ * @returns {boolean} True if the string is empty or all whitespace.
+ * @private
+ */
+function isEmptyOrWhitespace(str) {
+    return str == null || str.trim() === '';
+}
