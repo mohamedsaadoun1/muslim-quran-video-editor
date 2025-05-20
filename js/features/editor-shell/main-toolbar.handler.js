@@ -1,174 +1,564 @@
 // js/features/editor-shell/main-toolbar.handler.js
-
 import DOMElements from '../../core/dom-elements.js';
-import { ACTIONS, EVENTS } from '../../config/app.constants.js';
+import { 
+  ACTIONS, 
+  EVENTS,
+  APP_CONSTANTS
+} from '../../config/app.constants.js';
+import notificationPresenter from '../../shared-ui-components/notification.presenter.js';
+import modalFactory from '../../shared-ui-components/modal.factory.js';
 
+/**
+ * معالج أزرار شريط الأدوات الرئيسي
+ */
 const mainToolbarHandler = (() => {
-  // DOM element references from DOMElements will be accessed directly
-  // No need to cache them here again if DOMElements is properly initialized and used.
-
+  // الاعتمادات
   let dependencies = {
     stateStore: {
-        getState: () => ({ activeScreen: 'editor', currentProject: null }),
-        dispatch: () => {}
+      getState: () => ({ 
+        activeScreen: 'editor', 
+        currentProject: null,
+        mainPlaybackState: { isPlaying: false }
+      }),
+      dispatch: () => {}
     },
-    eventAggregator: { publish: () => {} },
+    eventAggregator: { 
+      publish: () => {}, 
+      subscribe: () => ({ unsubscribe: () => {} }) 
+    },
     errorLogger: console,
-    // themeControllerAPI: { toggleTheme: () => {} } // If theme toggle has its own API
-    // projectActionsAPI: { triggerSaveCurrentProject: () => {} } // From project.actions.js
-    // navigationServiceAPI: { navigateTo: (screen) => {} } // If navigation is a service
+    notificationServiceAPI: { 
+      showSuccess: (msg) => {}, 
+      showError: (msg) => {}, 
+      showWarning: (msg) => {}
+    },
+    projectActionsAPI: { 
+      saveCurrentProject: () => {}, 
+      loadNewProject: () => {}
+    },
+    screenNavigator: { 
+      navigateTo: (screen) => {} 
+    },
+    localizationService: { 
+      translate: key => key
+    }
   };
-
+  
+  // مراجع العناصر
+  let backButton, saveButton, themeButton, exportButton, undoButton, redoButton;
+  
   /**
-   * Handles the "Back to Initial Screen" button click.
-   * Publishes an event to request navigation.
+   * معالجة زر العودة إلى الشاشة الرئيسية
    * @private
    */
-  function _handleBackToInitialScreen() {
-    // Before navigating, you might want to check for unsaved changes.
-    // This logic would involve stateStore or project manager to check dirty state.
-    // For simplicity now, directly request navigation.
-    // if (dependencies.projectActionsAPI?.hasUnsavedChanges()) {
-    //    const confirmed = await dependencies.modalFactoryAPI.showConfirm({ title: 'تغييرات غير محفوظة', ... });
-    //    if (!confirmed) return;
-    // }
-
-    // Option 1: Dispatch action to change screen
-    dependencies.stateStore.dispatch(ACTIONS.SET_ACTIVE_SCREEN, 'initial');
-
-    // Option 2: Publish a navigation event (cleaner for decoupling)
-    // dependencies.eventAggregator.publish(EVENTS.NAVIGATE_TO_SCREEN, { screenId: 'initial' });
+  async function _handleBackToInitialScreen() {
+    const currentState = dependencies.stateStore.getState();
     
-    // console.debug('[MainToolbarHandler] "Back to Initial Screen" requested.');
-  }
-
-  /**
-   * Handles the "Save Project" button click.
-   * Publishes an event to request saving the current project.
-   * The actual saving logic should be in `project.actions.js` or similar.
-   * @private
-   */
-  function _handleSaveProject() {
-    const currentProject = dependencies.stateStore.getState().currentProject;
-    if (!currentProject) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-          message: 'No current project to save.', origin: 'MainToolbarHandler._handleSaveProject'
-      });
-      // dependencies.notificationServiceAPI?.showWarning('لا يوجد مشروع حالي لحفظه.');
+    if (!currentState || currentState.activeScreen !== 'editor') {
       return;
     }
     
-    // Option 1: Dispatch an action that a saga/thunk in stateStore or project.actions.js handles
-    // dependencies.stateStore.dispatch(ACTIONS.SAVE_CURRENT_PROJECT_REQUEST);
-
-    // Option 2: Publish a general "save request" event.
-    // This allows project.actions.js or another dedicated module to handle the saving logic
-    // including updating the project title from the DOM if it's editable and changed.
-    dependencies.eventAggregator.publish(EVENTS.REQUEST_PROJECT_SAVE);
-    // console.debug('[MainToolbarHandler] "Save Project" requested.');
+    try {
+      // التحقق من وجود تعديلات غير محفوظة
+      const projectIsDirty = dependencies.projectActionsAPI.isCurrentProjectDirty(currentState);
+      
+      if (projectIsDirty) {
+        const confirmed = await dependencies.modalFactoryAPI.showConfirm({
+          title: dependencies.localizationService.translate('toolbar.confirm.title') || 'تأكيد العودة',
+          message: dependencies.localizationService.translate('toolbar.confirm.message') || 'هل أنت متأكد من العودة؟ سيتم فقدان التعديلات غير المحفوظة.',
+          confirmText: dependencies.localizationService.translate('button.confirm') || 'تأكيد',
+          cancelText: dependencies.localizationService.translate('button.cancel') || 'إلغاء',
+          type: 'warning'
+        });
+        
+        if (!confirmed) return;
+      }
+      
+      // التنقل إلى الشاشة الرئيسية
+      dependencies.screenNavigator.navigateTo('initial');
+      dependencies.eventAggregator.publish(EVENTS.NAVIGATE_TO_SCREEN, {
+        screenId: 'initial',
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.toolbar.back') || 'فشل في العودة إلى الشاشة الرئيسية',
+        origin: 'MainToolbarHandler._handleBackToInitialScreen'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('toolbar.back.failed') || 'فشل في العودة إلى الشاشة الرئيسية'
+      );
+    }
   }
-
+  
   /**
-   * Handles the "Toggle Theme" button click.
-   * This might directly call a method on a themeControllerAPI or dispatch an action.
-   * If theme.controller.js already handles its own button clicks, this might not be needed here.
+   * معالجة زر الحفظ
+   * @private
+   */
+  async function _handleSaveProject() {
+    const currentState = dependencies.stateStore.getState();
+    const currentProject = currentState.currentProject;
+    
+    if (!currentProject || !currentProject.id) {
+      dependencies.errorLogger.warn({
+        message: dependencies.localizationService.translate('warning.project.no.current') || 'لا يوجد مشروع حالي لحفظه',
+        origin: 'MainToolbarHandler._handleSaveProject'
+      });
+      
+      dependencies.notificationServiceAPI?.showWarning(
+        dependencies.localizationService.translate('project.save.no.current') || 'لا يوجد مشروع حالي لحفظه'
+      );
+      
+      return;
+    }
+    
+    try {
+      // التحقق من صحة المشروع
+      const projectValidation = dependencies.projectModel.validateProjectData(currentProject);
+      
+      if (!projectValidation.isValid) {
+        dependencies.notificationServiceAPI?.showWarning(
+          dependencies.localizationService.translate('project.save.validation.failed', {
+            errors: projectValidation.errors.join(', ')
+          }) || `بيانات المشروع غير صحيحة: ${projectValidation.errors.join(', ')}`
+        );
+        
+        // إرسال إشعار بالخطأ
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_SAVED_FAILED, {
+          projectId: currentProject.id,
+          timestamp: Date.now(),
+          errors: projectValidation.errors
+        });
+        
+        return;
+      }
+      
+      // حفظ المشروع
+      const success = dependencies.projectActionsAPI.saveCurrentProject();
+      
+      if (success) {
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_SAVED_SUCCESS, {
+          projectId: currentProject.id,
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.save') || 'فشل في حفظ المشروع',
+        origin: 'MainToolbarHandler._handleSaveProject'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.save.failed') || 'فشل في حفظ المشروع'
+      );
+    }
+  }
+  
+  /**
+   * معالجة زر التبديل بين السمات
    * @private
    */
   function _handleToggleTheme() {
-    // If theme.controller.js handles its button directly, this function is redundant.
-    // If this toolbar handler is the *only* place wiring up this button's click:
-    const currentTheme = dependencies.stateStore.getState().currentTheme;
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    dependencies.stateStore.dispatch(ACTIONS.SET_THEME, newTheme);
-    // console.debug('[MainToolbarHandler] "Toggle Theme" requested.');
+    try {
+      const currentTheme = dependencies.stateStore.getState().currentTheme;
+      const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+      
+      dependencies.stateStore.dispatch(ACTIONS.SET_THEME, newTheme);
+      
+      // تحديث واجهة المستخدم
+      if (themeButton) {
+        themeButton.setAttribute('aria-label', dependencies.localizationService.translate(`theme.${newTheme}`) || newTheme);
+        themeButton.classList.toggle('light-mode', newTheme === 'light');
+        themeButton.classList.toggle('dark-mode', newTheme === 'dark');
+      }
+      
+      // نشر الحدث
+      dependencies.eventAggregator.publish(EVENTS.THEME_CHANGED, {
+        oldTheme: currentTheme,
+        newTheme: newTheme,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.theme.toggle') || 'فشل في تبديل السمة',
+        origin: 'MainToolbarHandler._handleToggleTheme'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('theme.toggle.failed') || 'فشل في تبديل السمة'
+      );
+    }
   }
   
-  function _setDependencies(injectedDeps) {
-      Object.assign(dependencies, injectedDeps);
+  /**
+   * معالجة زر التصدير
+   * @private
+   */
+  function _handleExportProject() {
+    try {
+      const currentState = dependencies.stateStore.getState();
+      const currentProject = currentState.currentProject;
+      
+      if (!currentProject || !currentProject.id) {
+        dependencies.errorLogger.warn({
+          message: dependencies.localizationService.translate('warning.project.no.current') || 'لا يوجد مشروع حالي للتصدير',
+          origin: 'MainToolbarHandler._handleExportProject'
+        });
+        
+        dependencies.notificationServiceAPI?.showWarning(
+          dependencies.localizationService.translate('project.export.no.current') || 'لا يوجد مشروع حالي للتصدير'
+        );
+        
+        return;
+      }
+      
+      // التحقق من صحة المشروع
+      const projectValidation = dependencies.projectModel.validateProjectData(currentProject);
+      
+      if (!projectValidation.isValid) {
+        dependencies.notificationServiceAPI?.showWarning(
+          dependencies.localizationService.translate('project.export.validation.failed', {
+            errors: projectValidation.errors.join(', ')
+          }) || `بيانات المشروع غير صحيحة: ${projectValidation.errors.join(', ')}`
+        );
+        return;
+      }
+      
+      // بدء التصدير
+      dependencies.eventAggregator.publish(EVENTS.EXPORT_STARTED, {
+        projectId: currentProject.id,
+        timestamp: Date.now()
+      });
+      
+      if (dependencies.exportRecorderAPI && dependencies.exportRecorderAPI.startRecording) {
+        dependencies.exportRecorderAPI.startRecording();
+      }
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.export') || 'فشل في تصدير المشروع',
+        origin: 'MainToolbarHandler._handleExportProject'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.export.failed') || 'فشل في تصدير المشروع'
+      );
+    }
   }
-
-  // Public API is primarily the initializer that sets up listeners.
+  
+  /**
+   * معالجة زر التراجع
+   * @private
+   */
+  function _handleUndo() {
+    try {
+      const currentState = dependencies.stateStore.getState();
+      const currentProject = currentState.currentProject;
+      
+      if (!currentProject || !currentProject.id) return;
+      
+      if (dependencies.undoRedoAPI && dependencies.undoRedoAPI.undo) {
+        dependencies.undoRedoAPI.undo();
+      } else {
+        dependencies.stateStore.dispatch(ACTIONS.UNDO_STATE);
+      }
+      
+      dependencies.eventAggregator.publish(EVENTS.PROJECT_UNDO, {
+        projectId: currentProject.id,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.undo.operation') || 'فشل في تنفيذ التراجع',
+        origin: 'MainToolbarHandler._handleUndo'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('undo.failed') || 'فشل في تنفيذ التراجع'
+      );
+    }
+  }
+  
+  /**
+   * معالجة زر الإعادة
+   * @private
+   */
+  function _handleRedo() {
+    try {
+      const currentState = dependencies.stateStore.getState();
+      const currentProject = currentState.currentProject;
+      
+      if (!currentProject || !currentProject.id) return;
+      
+      if (dependencies.undoRedoAPI && dependencies.undoRedoAPI.redo) {
+        dependencies.undoRedoAPI.redo();
+      } else {
+        dependencies.stateStore.dispatch(ACTIONS.REDO_STATE);
+      }
+      
+      dependencies.eventAggregator.publish(EVENTS.PROJECT_REDO, {
+        projectId: currentProject.id,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.redo.operation') || 'فشل في تنفيذ الإعادة',
+        origin: 'MainToolbarHandler._handleRedo'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('redo.failed') || 'فشل في تنفيذ الإعادة'
+      );
+    }
+  }
+  
+  /**
+   * معالجة زر البحث الصوتي
+   * @private
+   */
+  function _handleVoiceSearchToggle() {
+    try {
+      if (!dependencies.quranVoiceInputHandler || !dependencies.quranVoiceInputHandler.toggleListening) {
+        dependencies.errorLogger.warn({
+          message: dependencies.localizationService.translate('warning.voice.search.not.available') || 'البحث الصوتي غير متاح',
+          origin: 'MainToolbarHandler._handleVoiceSearchToggle'
+        });
+        return;
+      }
+      
+      dependencies.quranVoiceInputHandler.toggleListening();
+      dependencies.eventAggregator.publish(EVENTS.VOICE_SEARCH_TOGGLED, {
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.voice.search.toggle') || 'فشل في تبديل البحث الصوتي',
+        origin: 'MainToolbarHandler._handleVoiceSearchToggle'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('voice.search.failed') || 'فشل في البحث الصوتي'
+      );
+    }
+  }
+  
+  /**
+   * معالجة زر التشغيل
+   * @private
+   */
+  function _handlePlayToggle() {
+    try {
+      const currentState = dependencies.stateStore.getState();
+      const currentProject = currentState.currentProject;
+      
+      if (!currentProject || !currentProject.id) {
+        dependencies.errorLogger.warn({
+          message: dependencies.localizationService.translate('warning.project.no.current') || 'لا يوجد مشروع حالي للتشغيل',
+          origin: 'MainToolbarHandler._handlePlayToggle'
+        });
+        
+        dependencies.notificationServiceAPI?.showWarning(
+          dependencies.localizationService.translate('playback.no.project') || 'لا يوجد مشروع حالي للتشغيل'
+        );
+        
+        return;
+      }
+      
+      if (dependencies.mainPlaybackAPI) {
+        if (dependencies.mainPlaybackAPI.isPlaying()) {
+          dependencies.mainPlaybackAPI.pause();
+        } else {
+          dependencies.mainPlaybackAPI.play();
+        }
+        
+        dependencies.eventAggregator.publish(EVENTS.PLAYBACK_TOGGLED, {
+          isPlaying: dependencies.mainPlaybackAPI.isPlaying(),
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.playback.toggle') || 'فشل في تبديل التشغيل',
+        origin: 'MainToolbarHandler._handlePlayToggle'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('playback.toggle.failed') || 'فشل في تبديل التشغيل'
+      );
+    }
+  }
+  
+  /**
+   * تحديد الاعتمادات
+   * @param {Object} injectedDeps - الاعتمادات
+   */
+  function _setDependencies(injectedDeps) {
+    Object.keys(injectedDeps).forEach(key => {
+      if (injectedDeps[key]) {
+        dependencies[key] = injectedDeps[key];
+      }
+    });
+  }
+  
+  /**
+   * تنظيف الموارد
+   */
+  function cleanup() {
+    if (backButton) {
+      backButton.removeEventListener('click', _handleBackToInitialScreen);
+    }
+    
+    if (saveButton) {
+      saveButton.removeEventListener('click', _handleSaveProject);
+    }
+    
+    if (themeButton) {
+      themeButton.removeEventListener('click', _handleToggleTheme);
+    }
+    
+    if (exportButton) {
+      exportButton.removeEventListener('click', _handleExportProject);
+    }
+    
+    if (undoButton) {
+      undoButton.removeEventListener('click', _handleUndo);
+    }
+    
+    if (redoButton) {
+      redoButton.removeEventListener('click', _handleRedo);
+    }
+    
+    dependencies = {};
+    backButton = null;
+    saveButton = null;
+    themeButton = null;
+    exportButton = null;
+    undoButton = null;
+    redoButton = null;
+  }
+  
   return {
     _setDependencies,
+    _handleBackToInitialScreen,
+    _handleSaveProject,
+    _handleToggleTheme,
+    _handleExportProject,
+    _handleUndo,
+    _handleRedo,
+    cleanup
   };
 })();
 
-
 /**
- * Initialization function for the MainToolbarHandler.
- * Attaches event listeners to toolbar buttons.
- * @param {object} deps
- * @param {import('../../core/state-store.js').default} deps.stateStore
- * @param {import('../../core/event-aggregator.js').default} deps.eventAggregator
- * @param {import('../../core/error-logger.js').default} deps.errorLogger
- * // @param {object} [deps.projectActionsAPI] - From project.actions.js if save is a direct call
- * // @param {object} [deps.themeControllerAPI] - If theme toggle has a specific API
+ * وظيفة التهيئة
+ * @param {Object} deps - الاعتمادات
+ * @returns {Object} - واجهة عامة للوحدة
  */
 export function initializeMainToolbarHandler(deps) {
   mainToolbarHandler._setDependencies(deps);
-  const { errorLogger, stateStore, eventAggregator } = deps; // Destructure for use in handlers
-
-  let backButton, saveButton, themeButton; // Local refs to DOM elements
-
-  // --- Define handlers within this closure to access `deps` correctly ---
-  const handleBackToInitialClick = () => {
-    // Check for unsaved changes here before navigating (using stateStore or a project dirty flag)
-    // const projectIsDirty = stateStore.getState().currentProject?.isDirty; // hypothetical
-    // if (projectIsDirty) { ... show confirm modal ... }
-    eventAggregator.publish(EVENTS.NAVIGATE_TO_SCREEN, { screenId: 'initial' }); // Preferred way
-    // or stateStore.dispatch(ACTIONS.SET_ACTIVE_SCREEN, 'initial');
-  };
-
-  const handleSaveProjectClick = () => {
-    const currentProject = stateStore.getState().currentProject;
-    if (!currentProject) { /* log warning */ return; }
-    eventAggregator.publish(EVENTS.REQUEST_PROJECT_SAVE, { projectId: currentProject.id /*, any other context */ });
-  };
+  const {
+    stateStore,
+    errorLogger,
+    eventAggregator,
+    localizationService,
+    projectActionsAPI
+  } = deps;
   
-  const handleToggleThemeClick = () => {
-      // Assuming theme.controller.js correctly wires its own buttons, this might be redundant.
-      // If this button is solely controlled here:
-      const currentTheme = stateStore.getState().currentTheme;
-      stateStore.dispatch(ACTIONS.SET_THEME, currentTheme === 'light' ? 'dark' : 'light');
-  };
-
-
-  // Attach listeners
-  backButton = DOMElements.backToInitialScreenBtn;
-  if (backButton) {
-    backButton.addEventListener('click', handleBackToInitialClick);
+  // تعيين مراجع العناصر
+  mainToolbarHandler.backButtonRef = DOMElements.backToInitialScreenBtn;
+  mainToolbarHandler.saveButtonRef = DOMElements.saveProjectBtnEditor;
+  mainToolbarHandler.themeButtonRef = DOMElements.themeToggleEditor;
+  mainToolbarHandler.exportButtonRef = DOMElements.exportProjectBtnEditor;
+  mainToolbarHandler.undoButtonRef = DOMElements.undoProjectBtnEditor;
+  mainToolbarHandler.redoButtonRef = DOMElements.redoProjectBtnEditor;
+  
+  // إضافة مستمعي الأحداث
+  if (mainToolbarHandler.backButtonRef) {
+    mainToolbarHandler.backButtonRef.addEventListener('click', mainToolbarHandler._handleBackToInitialScreen);
   } else {
-    (errorLogger.logWarning || console.warn)('Back button in editor toolbar not found.');
-  }
-
-  saveButton = DOMElements.saveProjectBtnEditor;
-  if (saveButton) {
-    saveButton.addEventListener('click', handleSaveProjectClick);
-  } else {
-    (errorLogger.logWarning || console.warn)('Save button in editor toolbar not found.');
+    errorLogger.warn({
+      message: localizationService.translate('warning.toolbar.back.button.not.found') || 'زر العودة غير موجود',
+      origin: 'MainToolbarHandler.initializeMainToolbarHandler'
+    });
   }
   
-  themeButton = DOMElements.themeToggleEditor;
-  if (themeButton) {
-      // Check if theme.controller.js already handles this. If not:
-      themeButton.addEventListener('click', handleToggleThemeClick);
-      // If theme.controller.js *does* handle it, this listener here is not needed
-      // and this button might just get its icon updated by theme.controller.
+  if (mainToolbarHandler.saveButtonRef) {
+    mainToolbarHandler.saveButtonRef.addEventListener('click', mainToolbarHandler._handleSaveProject);
   } else {
-    (errorLogger.logWarning || console.warn)('Theme toggle button in editor toolbar not found.');
+    errorLogger.warn({
+      message: localizationService.translate('warning.toolbar.save.button.not.found') || 'زر الحفظ غير موجود',
+      origin: 'MainToolbarHandler.initializeMainToolbarHandler'
+    });
   }
   
-  // console.info('[MainToolbarHandler] Initialized and event listeners attached.');
-
+  if (mainToolbarHandler.themeButtonRef) {
+    mainToolbarHandler.themeButtonRef.addEventListener('click', mainToolbarHandler._handleToggleTheme);
+  } else {
+    errorLogger.warn({
+      message: localizationService.translate('warning.toolbar.theme.button.not.found') || 'زر التبديل غير موجود',
+      origin: 'MainToolbarHandler.initializeMainToolbarHandler'
+    });
+  }
+  
+  if (mainToolbarHandler.exportButtonRef) {
+    mainToolbarHandler.exportButtonRef.addEventListener('click', mainToolbarHandler._handleExportProject);
+  } else {
+    errorLogger.warn({
+      message: localizationService.translate('warning.toolbar.export.button.not.found') || 'زر التصدير غير موجود',
+      origin: 'MainToolbarHandler.initializeMainToolbarHandler'
+    });
+  }
+  
+  if (mainToolbarHandler.undoButtonRef) {
+    mainToolbarHandler.undoButtonRef.addEventListener('click', mainToolbarHandler._handleUndo);
+  } else {
+    errorLogger.warn({
+      message: localizationService.translate('warning.toolbar.undo.button.not.found') || 'زر التراجع غير موجود',
+      origin: 'MainToolbarHandler.initializeMainToolbarHandler'
+    });
+  }
+  
+  if (mainToolbarHandler.redoButtonRef) {
+    mainToolbarHandler.redoButtonRef.addEventListener('click', mainToolbarHandler._handleRedo);
+  } else {
+    errorLogger.warn({
+      message: localizationService.translate('warning.toolbar.redo.button.not.found') || 'زر الإعادة غير موجود',
+      origin: 'MainToolbarHandler.initializeMainToolbarHandler'
+    });
+  }
+  
+  // الاشتراك في أحداث النظام
+  const subscription = eventAggregator.subscribe(EVENTS.REQUEST_PROJECT_SAVE, () => {
+    mainToolbarHandler._handleSaveProject();
+  });
+  
+  const navigationSubscription = eventAggregator.subscribe(EVENTS.NAVIGATE_TO_EDITOR_NEW_PROJECT, () => {
+    mainToolbarHandler._handleBackToInitialScreen();
+  });
+  
+  // تهيئة حالة السمة
+  const currentState = stateStore.getState();
+  if (currentState && currentState.currentTheme) {
+    if (currentState.currentTheme === 'dark') {
+      mainToolbarHandler.themeButtonRef?.classList.add('dark-mode');
+    } else {
+      mainToolbarHandler.themeButtonRef?.classList.add('light-mode');
+    }
+  }
+  
   return {
     cleanup: () => {
-      if (backButton) backButton.removeEventListener('click', handleBackToInitialClick);
-      if (saveButton) saveButton.removeEventListener('click', handleSaveProjectClick);
-      if (themeButton) themeButton.removeEventListener('click', handleToggleThemeClick);
-      // console.info('[MainToolbarHandler] Cleaned up event listeners.');
+      subscription.unsubscribe();
+      navigationSubscription.unsubscribe();
+      mainToolbarHandler.cleanup();
     }
-    // No other public API usually needed from a simple handler module.
   };
 }
-
-export default mainToolbarHandler;
