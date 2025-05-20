@@ -1,28 +1,98 @@
-
 // js/services/quran.api.client.js
 
-// Base URL for Alquran.cloud API
-const QURAN_API_BASE_URL = 'https://api.alquran.cloud/v1';
+/**
+ * @typedef {Object} QuranSurah
+ * @property {number} number - رقم السورة (1-114)
+ * @property {string} name - اسم السورة بالعربية
+ * @property {string} englishName - اسم السورة بالإنجليزية
+ * @property {string} englishNameTranslation - ترجمة اسم السورة
+ * @property {string} revelationType - نوع السورة (مكية أو مدنية)
+ * @property {number} numberOfAyahs - عدد آيات السورة
+ * @property {Array<QuranAyah>} [ayahs] - آيات السورة (اختياري)
+ */
 
-// This client primarily makes GET requests and processes JSON responses.
-// errorLogger can be passed to methods or configured if this becomes a class/instantiated object.
+/**
+ * @typedef {Object} QuranAyah
+ * @property {number} number - الرقم العالمي للآية (1-6236)
+ * @property {number} numberInSurah - الرقم داخل السورة
+ * @property {string} text - نص الآية
+ * @property {number} juz - الجزء
+ * @property {number} manzil - المنزل
+ * @property {number} page - الصفحة
+ * @property {number} ruku - الركوع
+ * @property {number} hizbQuarter - الربع
+ * @property {boolean} sajda - هل تحتوي الآية على سجدة
+ * @property {Object} [surah] - معلومات السورة
+ * @property {number} surah.number - رقم السورة
+ * @property {string} surah.name - اسم السورة
+ */
 
+/**
+ * @typedef {Object} QuranEdition
+ * @property {string} identifier - معرف الإصدار (مثال: 'quran-uthmani')
+ * @property {string} language - اللغة (مثال: 'ar'، 'en')
+ * @property {string} name - اسم الإصدار بالعربية
+ * @property {string} englishName - اسم الإصدار بالإنجليزية
+ * @property {string} format - التنسيق (نص، صوت، فيديو)
+ * @property {string} type - النوع (ترجمة، تفسير، قرآن)
+ * @property {string} direction - اتجاه النص (rtl، ltr)
+ */
+
+/**
+ * @typedef {Object} QuranAudioEdition
+ * @property {string} identifier - معرف الإصدار (مثال: 'ar.alafasy')
+ * @property {string} language - اللغة (مثال: 'ar')
+ * @property {string} name - اسم الإصدار بالعربية
+ * @property {string} englishName - اسم الإصدار بالإنجليزية
+ * @property {string} format - التنسيق (mp3، wav)
+ * @property {string} type - النوع (تلاوة، تفسير صوتي)
+ * @property {string} direction - اتجاه النص (rtl، ltr)
+ */
+
+/**
+ * @typedef {Object} QuranTranslationEdition
+ * @property {string} identifier - معرف الإصدار (مثال: 'en.sahih')
+ * @property {string} language - اللغة (مثال: 'en')
+ * @property {string} name - اسم الإصدار بالعربية
+ * @property {string} englishName - اسم الإصدار بالإنجليزية
+ * @property {string} format - التنسيق (نص)
+ * @property {string} type - النوع (ترجمة، تفسير)
+ * @property {string} direction - اتجاه النص (rtl، ltr)
+ */
+
+/**
+ * @typedef {Object} QuranWordTiming
+ * @property {string} text - نص الكلمة
+ * @property {number} start - وقت البدء (بالمللي ثانية)
+ * @property {number} end - وقت الانتهاء (بالمللي ثانية)
+ * @property {number} charIndex - موقع الحرف في الآية
+ * @property {number} wordIndex - موقع الكلمة في الآية
+ */
+
+const QURAN_API_BASE_URL = 'https://api.alquran.cloud/v1 ';
+
+/**
+ * العميل الخاص بـ Alquran.cloud API
+ * @type {{}}
+ */
 const quranApiClient = {
   /**
-   * Performs a request to the Alquran.cloud API.
+   * إجراء طلب إلى Alquran.cloud API
    * @private
-   * @param {string} endpoint - The API endpoint (e.g., '/surah', '/ayah/1:1/en.asad').
-   * @param {Record<string, string | number>} [params] - Optional query parameters.
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger instance.
-   * @returns {Promise<Object>} The JSON response from the API.
-   * @throws {Error} If the request fails or the API returns an error status.
+   * @param {string} endpoint - النقطة النهائية للطلب
+   * @param {Object} [params] - معلمات الطلب
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<Object>} وعد بالنتيجة
    */
   async _request(endpoint, params, errorLogger = console) {
     const url = new URL(`${QURAN_API_BASE_URL}${endpoint}`);
+    
     if (params) {
-      Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
+      Object.keys(params).forEach(key => {
+        url.searchParams.append(key, params[key]);
+      });
     }
-
+    
     try {
       const response = await fetch(url.toString(), {
         method: 'GET',
@@ -30,171 +100,365 @@ const quranApiClient = {
           'Accept': 'application/json',
         },
       });
-
-      const responseData = await response.json(); // Alquran.cloud always returns JSON
-
+      
+      const responseData = await response.json();
+      
       if (!response.ok || responseData.status === 'error' || responseData.code !== 200) {
-        // API specific error structure: responseData.data might contain the error message
-        const errorMessage = typeof responseData.data === 'string' ? responseData.data :
-                             (responseData.message || `API request failed with status ${response.status} and code ${responseData.code}`);
+        const errorMessage = typeof responseData.data === 'string' ? 
+                             responseData.data : 
+                             (responseData.message || `فشل الطلب مع حالة ${response.status}`);
+        
         throw new Error(errorMessage);
       }
       
-      // The actual data is usually in responseData.data
       return responseData.data;
-
     } catch (error) {
-      const isNetworkError = !(error.message && error.message.startsWith('API request failed')); // Crude check
-      (errorLogger.handleError || errorLogger.error)?.call(errorLogger, {
-        error: error instanceof Error ? error : new Error(String(error)),
-        message: `Error during Alquran.cloud API request to "${endpoint}". ${ isNetworkError ? 'Likely a network issue. ' : ''}${error.message}`,
-        origin: 'quranApiClient._request',
-        context: { endpoint, params: params ? params : {}, fullUrl: url.toString() }
-      });
+      const isNetworkError = !(error.message && error.message.startsWith('فشل الطلب'));
+      
+      if (errorLogger.handleError) {
+        errorLogger.handleError(error, `خطأ في طلب Alquran.cloud API إلى "${endpoint}"`, 'quranApiClient._request', {
+          endpoint, 
+          params: params || {}, 
+          fullUrl: url.toString()
+        });
+      } else if (errorLogger.error) {
+        errorLogger.error(`خطأ في طلب Alquran.cloud API إلى "${endpoint}"`, error, {
+          endpoint, 
+          params: params || {}, 
+          fullUrl: url.toString()
+        });
+      } else {
+        console.error(`[quranApiClient] خطأ في طلب Alquran.cloud API إلى "${endpoint}"`, error);
+      }
+      
       throw error instanceof Error ? error : new Error(String(error));
     }
   },
 
   /**
-   * Fetches a list of all Surahs (chapters) of the Quran.
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Array<Object>>} A promise that resolves with an array of Surah objects.
-   * Each Surah object typically contains: number, name, englishName, englishNameTranslation, revelationType, numberOfAyahs.
-   * Example: { "number": 1, "name": "سُورَةُ ٱلْفَاتِحَةِ", "englishName": "Al-Faatiha", "englishNameTranslation": "The Opening", "numberOfAyahs": 7, "revelationType": "Meccan" }
+   * الحصول على قائمة كل السور
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<Array<QuranSurah>>} وعد بقائمة السور
    */
   async getAllSurahs(errorLogger = console) {
     return this._request('/meta', undefined, errorLogger)
       .then(metaData => {
         if (metaData && metaData.surahs && metaData.surahs.references) {
-            return metaData.surahs.references; // The array of surah objects
+          return metaData.surahs.references;
         }
-        throw new Error('Surah list not found in /meta response structure.');
+        
+        throw new Error('لم يتم العثور على قائمة السور في استجابة /meta.');
       });
   },
 
   /**
-   * Fetches a specific Surah by its number, including all its Ayahs (verses).
-   * @param {number} surahNumber - The number of the Surah (1-114).
-   * @param {string} [editionIdentifier='quran-uthmani'] - Optional: Quran edition (e.g., 'quran-uthmani', 'en.sahih').
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object>} A promise that resolves with the Surah object containing ayahs.
-   * Structure includes: number, name, englishName, ..., ayahs: [{number, text, numberInSurah, juz, manzil, page, ruku, hizbQuarter, sajda}]
+   * الحصول على سورة معينة مع آياتها
+   * @param {number} surahNumber - رقم السورة (1-114)
+   * @param {string} [editionIdentifier='quran-uthmani'] - معرف الإصدار
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranSurah>} وعد بمعلومات السورة
    */
   async getSurahWithAyahs(surahNumber, editionIdentifier = 'quran-uthmani', errorLogger = console) {
     if (typeof surahNumber !== 'number' || surahNumber < 1 || surahNumber > 114) {
-      const err = new Error('Invalid Surah number. Must be between 1 and 114.');
-       (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-        message: err.message, origin: 'quranApiClient.getSurahWithAyahs', context: { surahNumber }
-      });
+      const err = new Error('رقم السورة غير صالح. يجب أن يكون بين 1 و114.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getSurahWithAyahs', { surahNumber });
       return Promise.reject(err);
     }
+    
     return this._request(`/surah/${surahNumber}/${editionIdentifier}`, undefined, errorLogger);
   },
 
   /**
-   * Fetches a specific Ayah by its number in the Quran (e.g., "1:1" or 1 for first ayah, "2:255" or 282 for Ayat al-Kursi).
-   * Can fetch multiple ayahs if the 'ayahs' parameter is an array of ayah references or a range like "1:1-1:7".
-   * @param {string | number} ayahReference - Ayah reference (e.g., "2:255", 282). Or range "1:1-1:7".
-   * @param {string} [editionIdentifier='quran-uthmani'] - Quran edition (e.g., 'quran-uthmani' for Arabic text).
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object|Array<Object>>} A promise that resolves with the Ayah object or an array of Ayah objects if a range/list.
-   * Ayah object contains: number, text, edition, surah, numberInSurah, juz, etc.
+   * الحصول على آية معينة
+   * @param {string | number} ayahReference - مرجع الآية (مثال: "2:255" أو 282)
+   * @param {string} [editionIdentifier='quran-uthmani'] - معرف الإصدار
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranAyah | Array<QuranAyah>>} وعد بمعلومات الآية
    */
   async getAyah(ayahReference, editionIdentifier = 'quran-uthmani', errorLogger = console) {
     if (!ayahReference) {
-       const err = new Error('Ayah reference is required.');
-       (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-        message: err.message, origin: 'quranApiClient.getAyah', context: { ayahReference }
-      });
+      const err = new Error('مرجع الآية مطلوب.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getAyah', { ayahReference });
       return Promise.reject(err);
     }
-    // The API endpoint expects the edition identifier as part of the path after the Ayah reference.
+    
     return this._request(`/ayah/${ayahReference}/${editionIdentifier}`, undefined, errorLogger);
   },
 
   /**
-   * Fetches a specific Ayah's audio. Note: The API provides segment timings if edition supports it.
-   * This method is more for fetching the Ayah text alongside its audio reference from a *specific audio edition*.
-   * The actual audio files are usually at a different URL pattern or retrieved segment by segment.
-   * @param {string | number} ayahReference - Ayah reference (e.g., "1:1", 1).
-   * @param {string} audioEditionIdentifier - Audio edition identifier (e.g., 'ar.alafasy', 'ar.minshawi').
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object|Array<Object>>} A promise that resolves with Ayah data which includes audio segments.
-   * Example Ayah object for audio: { ..., audio: "...", audioSecondary: ["..."] }
-   * The `audio` field here is a direct link to an audio file for the whole ayah for that edition.
+   * الحصول على بيانات الصوت للآية
+   * @param {string | number} ayahReference - مرجع الآية
+   * @param {string} audioEditionIdentifier - معرف إصدار الصوت
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranAyah>} وعد بمعلومات الآية مع روابط الصوت
    */
   async getAyahAudioData(ayahReference, audioEditionIdentifier, errorLogger = console) {
     if (!ayahReference || !audioEditionIdentifier) {
-      const err = new Error('Ayah reference and audio edition identifier are required.');
-      (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-        message: err.message, origin: 'quranApiClient.getAyahAudioData', context: { ayahReference, audioEditionIdentifier }
-      });
+      const err = new Error('مرجع الآية ومعرف إصدار الصوت مطلوبان.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getAyahAudioData', { ayahReference, audioEditionIdentifier });
       return Promise.reject(err);
     }
-    // The request is similar to getAyah, but with an audio edition.
+    
     return this._request(`/ayah/${ayahReference}/${audioEditionIdentifier}`, undefined, errorLogger);
   },
 
-
   /**
-   * Fetches a translation or tafsir for a specific Ayah.
-   * @param {string | number} ayahReference - Ayah reference (e.g., "1:1", 1).
-   * @param {string} translationEditionIdentifier - Translation/Tafsir edition identifier (e.g., 'en.sahih', 'ar.muyassar').
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object|Array<Object>>} A promise that resolves with the Ayah object containing the translation.
-   * The `text` field in the response will be the translated text.
+   * الحصول على ترجمة للآية
+   * @param {string | number} ayahReference - مرجع الآية
+   * @param {string} translationEditionIdentifier - معرف إصدار الترجمة
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranAyah>} وعد بمعلومات الآية مع الترجمة
    */
   async getAyahTranslation(ayahReference, translationEditionIdentifier, errorLogger = console) {
-     if (!ayahReference || !translationEditionIdentifier) {
-      const err = new Error('Ayah reference and translation edition identifier are required.');
-       (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-        message: err.message, origin: 'quranApiClient.getAyahTranslation', context: { ayahReference, translationEditionIdentifier }
-      });
+    if (!ayahReference || !translationEditionIdentifier) {
+      const err = new Error('مرجع الآية ومعرف إصدار الترجمة مطلوبان.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getAyahTranslation', { ayahReference, translationEditionIdentifier });
       return Promise.reject(err);
     }
-    // The request is similar to getAyah, but with a translation edition.
+    
     return this._request(`/ayah/${ayahReference}/${translationEditionIdentifier}`, undefined, errorLogger);
   },
 
   /**
-   * Fetches a list of available Quran editions (text, translation, audio).
-   * @param {Object} [options] - Optional filters.
-   * @param {string} [options.format] - Filter by format (e.g., 'text', 'audio').
-   * @param {string} [options.type] - Filter by type (e.g., 'translation', 'tafsir', 'quran').
-   * @param {string} [options.language] - Filter by language code (e.g., 'en', 'ar').
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Array<Object>>} A promise that resolves with an array of edition objects.
-   * Edition object: { identifier, language, name, englishName, format, type, direction }
+   * الحصول على قائمة الإصدارات المتاحة
+   * @param {Object} [options] - خيارات التصفية
+   * @param {string} [options.format] - التنسيق (text، audio)
+   * @param {string} [options.type] - النوع (ترجمة، تفسير، قرآن)
+   * @param {string} [options.language] - اللغة (en، ar)
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<Array<QuranEdition>>} وعد بقائمة الإصدارات
    */
   async getEditions(options = {}, errorLogger = console) {
-    // The endpoint is '/edition' with optional query parameters.
     return this._request('/edition', options, errorLogger);
   },
 
   /**
-   * Fetches word-by-word audio timing information for an Ayah, if available for the edition.
-   * Example: /ayah/1:1/ar.husarymujawwad/offsets=true&timing=word
-   * This usually returns the Ayah text and within it, a "words" array or similar with timings.
-   * THIS IS A MORE ADVANCED USE CASE and might not be directly supported by all editions or a simple endpoint.
-   * Alquran.cloud API provides word timestamps through certain audio editions that specify word timings.
-   * You'd typically fetch an audio edition and look for segmentation data.
-   * The standard /ayah/{ref}/{audio_edition} might return segment info directly if available.
-   * The `https://everyayah.com/data/Frankahili_WoW_Audio_Timings_זו世ليفےFrankWords.txt` provides external word timings.
-   * Alquran.cloud can return audio segments within the ayah object for some audio editions.
-   * E.g., if an audio edition is specified with `? включаетСегменты=true` (this is hypothetical, check API docs).
-   * For Alquran.cloud, check if an audio edition has "type": "versebyverse" or similar and see if segment data is returned.
+   * الحصول على ترجمة الآية
+   * @param {string | number} ayahReference - مرجع الآية
+   * @param {string} translationEditionIdentifier - معرف إصدار الترجمة
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranAyah>} وعد بمعلومات الآية مع الترجمة
    */
-  // async getAyahWordTimings(ayahReference, audioEditionIdentifier, errorLogger = console) {
-  //   // This requires a specific edition that supports word timings or segments.
-  //   // The structure might be within the standard getAyahAudioData response
-  //   // if the edition supports it, or it might be a different endpoint or parameter.
-  //   // For simplicity, assuming segment data is part of the standard audio data fetch for now.
-  //   return this.getAyahAudioData(ayahReference, audioEditionIdentifier, errorLogger);
-  // }
+  async getAyahTranslation(ayahReference, translationEditionIdentifier, errorLogger = console) {
+    if (!ayahReference || !translationEditionIdentifier) {
+      const err = new Error('مرجع الآية ومعرف إصدار الترجمة مطلوبان.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getAyahTranslation', { ayahReference, translationEditionIdentifier });
+      return Promise.reject(err);
+    }
+    
+    return this._request(`/ayah/${ayahReference}/${translationEditionIdentifier}`, undefined, errorLogger);
+  },
+
+  /**
+   * الحصول على معلومات عن الآيات مع أوقات الكلمات
+   * @param {string | number} ayahReference - مرجع الآية
+   * @param {string} audioEditionIdentifier - معرف إصدار الصوت
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranAyah>} وعد بمعلومات الآية مع أوقات الكلمات
+   */
+  async getAyahWordTimings(ayahReference, audioEditionIdentifier, errorLogger = console) {
+    if (!ayahReference || !audioEditionIdentifier) {
+      const err = new Error('مرجع الآية ومعرف إصدار الصوت مطلوبان.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getAyahWordTimings', { ayahReference, audioEditionIdentifier });
+      return Promise.reject(err);
+    }
+    
+    // إضافة معلمات إضافية للحصول على أوقات الكلمات
+    return this._request(`/ayah/${ayahReference}/${audioEditionIdentifier}`, {
+      offsets: true,
+      timing: 'word'
+    }, errorLogger);
+  },
+
+  /**
+   * التحقق من صحة رقم السورة
+   * @param {number} surahNumber - رقم السورة
+   * @returns {boolean} true إذا كان الرقم صحيحًا
+   */
+  validateSurahNumber(surahNumber) {
+    return typeof surahNumber === 'number' && 
+           surahNumber >= 1 && 
+           surahNumber <= 114;
+  },
+
+  /**
+   * التحقق من صحة مرجع الآية
+   * @param {string | number} ayahReference - مرجع الآية
+   * @returns {boolean} true إذا كان المرجع صحيحًا
+   */
+  validateAyahReference(ayahReference) {
+    if (typeof ayahReference === 'number') {
+      return ayahReference >= 1 && ayahReference <= 6236;
+    }
+    
+    if (typeof ayahReference === 'string') {
+      const ayahRangeRegex = /^(\d+):(\d+)(?:-(\d+):(\d+))?$/;
+      return ayahRangeRegex.test(ayahReference);
+    }
+    
+    return false;
+  },
+
+  /**
+   * تحليل مرجع الآية
+   * @param {string} ayahReference - مرجع الآية
+   * @returns {Object} معلومات تفصيلية عن الآية أو المدى
+   */
+  parseAyahReference(ayahReference) {
+    if (typeof ayahReference === 'number') {
+      return { globalAyahNumber: ayahReference };
+    }
+    
+    const parts = ayahReference.split(':');
+    
+    if (parts.length === 2) {
+      const surahNumber = parseInt(parts[0], 10);
+      const ayahNumber = parseInt(parts[1], 10);
+      
+      if (!isNaN(surahNumber) && !isNaN(ayahNumber)) {
+        return { surahNumber, ayahNumber };
+      }
+    }
+    
+    const rangeParts = ayahReference.split('-');
+    
+    if (rangeParts.length === 2) {
+      const start = this.parseAyahReference(rangeParts[0]);
+      const end = this.parseAyahReference(rangeParts[1]);
+      
+      if (start.surahNumber === end.surahNumber) {
+        return {
+          surahNumber: start.surahNumber,
+          startAyah: start.ayahNumber,
+          endAyah: end.ayahNumber
+        };
+      }
+    }
+    
+    return null;
+  },
+
+  /**
+   * تنسيق معرف الإصدار
+   * @param {string} identifier - المعرف الأصلي
+   * @returns {string} المعرف المنقح
+   */
+  formatEditionIdentifier(identifier) {
+    if (!identifier || typeof identifier !== 'string') {
+      return 'quran-uthmani';
+    }
+    
+    return identifier.trim().toLowerCase();
+  },
+
+  /**
+   * الحصول على مدى الآيات
+   * @param {string} ayahRange - مدى الآيات (مثال: "1:1-1:7")
+   * @param {string} [editionIdentifier='quran-uthmani'] - معرف الإصدار
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<Array<QuranAyah>>} وعد بقائمة الآيات
+   */
+  async getAyahRange(ayahRange, editionIdentifier = 'quran-uthmani', errorLogger = console) {
+    const parsed = this.parseAyahReference(ayahRange);
+    
+    if (!parsed || !parsed.surahNumber || !parsed.startAyah || !parsed.endAyah) {
+      const err = new Error('مدى الآيات غير صحيح.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getAyahRange', { ayahRange });
+      return Promise.reject(err);
+    }
+    
+    return this._request(`/surah/${parsed.surahNumber}/${editionIdentifier}`, undefined, errorLogger)
+      .then(surah => {
+        if (!surah || !surah.ayahs) {
+          throw new Error('بيانات الآيات غير متاحة.');
+        }
+        
+        const startIndex = Math.max(0, parsed.startAyah - 1);
+        const endIndex = Math.min(surah.ayahs.length, parsed.endAyah);
+        
+        return surah.ayahs.slice(startIndex, endIndex);
+      });
+  },
+
+  /**
+   * الحصول على تفاصيل الآية من نصها
+   * @param {string} ayahText - نص الآية
+   * @param {string} [language='ar'] - لغة البحث
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranAyah>} وعد بمعلومات الآية
+   */
+  async getAyahByContent(ayahText, language = 'ar', errorLogger = console) {
+    if (!ayahText || typeof ayahText !== 'string' || ayahText.trim().length < 10) {
+      const err = new Error('نص الآية غير كافٍ للبحث.');
+      this._logWarning(errorLogger, err.message, 'quranApiClient.getAyahByContent', { ayahText });
+      return Promise.reject(err);
+    }
+    
+    // هذه الوظيفة تتطلب واجهة بحث متقدمة لم يتم توفيرها في API الحالي
+    // يمكن استخدام واجهات بحث خارجية أو قاعدة بيانات محلية
+    return new Promise((resolve, reject) => {
+      import('../data/quran-index.js').then(quranIndex => {
+        const result = quranIndex.findAyahByText(ayahText, language);
+        
+        if (result) {
+          resolve(this.getAyah(result.globalAyahNumber, 'quran-uthmani', errorLogger));
+        } else {
+          reject(new Error('لم يتم العثور على الآية.'));
+        }
+      }).catch(e => {
+        reject(new Error('فشل في تحميل فهرس القرآن للبحث.'));
+      });
+    });
+  },
+
+  /**
+   * تسجيل تحذير
+   * @param {Object} logger - مسجل الأخطاء
+   * @param {string} message - رسالة التحذير
+   * @param {string} origin - مصدر التحذير
+   * @param {Object} context - سياق التحذير
+   */
+  _logWarning(logger, message, origin, context) {
+    if (logger.logWarning) {
+      logger.logWarning({ message, origin, context });
+    } else if (logger.warn) {
+      logger.warn(message, context);
+    } else {
+      console.warn(message, context);
+    }
+  }
 };
 
-// This service typically doesn't need an `initialize...` function from moduleBootstrap
-// unless it needs to be configured with a base URL or default errorLogger during app startup.
-// Usually, its methods are imported and called directly.
+/**
+ * تهيئة العميل الخاص بـ Alquran.cloud API
+ * @param {Object} [dependencies] - التبعيات الاختيارية
+ */
+export function initializeQuranApiClient(dependencies = {}) {
+  const { errorLogger } = dependencies;
+  
+  try {
+    console.info('[QuranApiClient] تم تهيئته بنجاح');
+    
+    // جعل الوظائف متاحة عالميًا لتسهيل التصحيح
+    if (typeof window !== 'undefined' && 
+        (typeof process === 'undefined' || process.env.NODE_ENV === 'development')) {
+      window.quranApiClient = {
+        ...quranApiClient
+      };
+    }
+    
+    return {
+      ...quranApiClient
+    };
+  } catch (error) {
+    if (errorLogger) {
+      errorLogger.logError(error, 'فشل في تهيئة QuranApiClient');
+    } else {
+      console.error('[QuranApiClient] فشل في التهيئة:', error);
+    }
+    
+    return {};
+  }
+}
 
 export default quranApiClient;
