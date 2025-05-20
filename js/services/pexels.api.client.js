@@ -1,64 +1,121 @@
 // js/services/pexels.api.client.js
 
-// Attempt to import PEXELS_API_KEY.
-// In a real build process, this would work seamlessly.
-// For standalone or simpler setups, handle its potential absence gracefully.
+/**
+ * @typedef {Object} PexelsPhoto
+ * @property {number} id - معرف الصورة
+ * @property {number} width - عرض الصورة
+ * @property {number} height - ارتفاع الصورة
+ * @property {string} url - رابط الصورة
+ * @property {string} photographer - اسم المصور
+ * @property {Object} src - مصادر الصورة المختلفة
+ * @property {string} src.original - الرابط الأصلي للصورة
+ * @property {string} src.large2x - الرابط بجودة عالية 2x
+ * @property {string} src.large - الرابط بجودة عالية
+ * @property {string} src.medium - الرابط بجودة متوسطة
+ * @property {string} src.small - الرابط بجودة منخفضة
+ * @property {string} src.portrait - الرابط بوضع عمودي
+ * @property {string} src.landscape - الرابط بوضع أفقي
+ * @property {string} src.tiny - الرابط بحجم صغير
+ */
+
+/**
+ * @typedef {Object} PexelsVideo
+ * @property {number} id - معرف الفيديو
+ * @property {number} width - عرض الفيديو
+ * @property {number} height - ارتفاع الفيديو
+ * @property {string} url - رابط الفيديو
+ * @property {string} image - رابط الصورة المصغرة
+ * @property {number} duration - مدة الفيديو بالثواني
+ * @property {Object} user - معلومات المستخدم
+ * @property {number} user.id - معرف المستخدم
+ * @property {string} user.name - اسم المستخدم
+ * @property {string} user.url - رابط صفحة المستخدم
+ * @property {Array<Object>} video_files - قائمة ملفات الفيديو المختلفة
+ * @property {number} video_files[].id - معرف ملف الفيديو
+ * @property {string} video_files[].quality - جودة الفيديو ('hd', 'sd')
+ * @property {string} video_files[].file_type - نوع الملف
+ * @property {number} video_files[].width - عرض الفيديو
+ * @property {number} video_files[].height - ارتفاع الفيديو
+ * @property {string} video_files[].link - رابط ملف الفيديو
+ * @property {Array<Object>} video_pictures - صور الفيديو
+ * @property {number} video_pictures[].id - معرف الصورة
+ * @property {string} video_pictures[].picture - رابط الصورة
+ * @property {number} video_pictures[].nr - رقم الصورة
+ */
+
+/**
+ * @typedef {Object} PexelsSearchResult
+ * @property {Array<PexelsPhoto>} photos - قائمة الصور
+ * @property {number} page - رقم الصفحة
+ * @property {number} per_page - عدد النتائج في الصفحة
+ * @property {number} total_results - إجمالي عدد النتائج
+ * @property {string} next_page - الرابط للصفحة التالية
+ */
+
+/**
+ * @typedef {Object} PexelsVideoSearchResult
+ * @property {Array<PexelsVideo>} videos - قائمة الفيديوهات
+ * @property {number} page - رقم الصفحة
+ * @property {number} per_page - عدد النتائج في الصفحة
+ * @property {number} total_results - إجمالي عدد النتائج
+ * @property {string} next_page - الرابط للصفحة التالية
+ */
+
 let PEXELS_API_KEY_VALUE = null;
+
 try {
-  // This assumes api-keys.config.js is correctly structured and PEXELS_API_KEY is exported.
-  // Ensure api-keys.config.js is added to .gitignore if it contains real keys.
-  const apiKeysConfig = await import('../config/api-keys.config.js'); // Use dynamic import
+  // استيراد مفتاح Pexels API من ملف الإعدادات
+  const apiKeysConfig = await import('../config/api-keys.config.js');
+  
   if (apiKeysConfig && apiKeysConfig.PEXELS_API_KEY) {
     PEXELS_API_KEY_VALUE = apiKeysConfig.PEXELS_API_KEY;
   } else {
-    console.warn('[PexelsApiClient] PEXELS_API_KEY not found in api-keys.config.js. Pexels functionality will be disabled.');
+    console.warn('[PexelsApiClient] لم يتم العثور على مفتاح PEXELS_API_KEY في ملف الإعدادات.');
   }
 } catch (e) {
-  console.warn('[PexelsApiClient] Could not load api-keys.config.js. Pexels functionality will be disabled. Error:', e);
-  // This can happen if the file doesn't exist or there's an error in it.
+  console.warn('[PexelsApiClient] لا يمكن تحميل ملف api-keys.config.js:', e);
 }
 
-// Base URL for Pexels API
-const PEXELS_API_BASE_URL = 'https://api.pexels.com/v1';
-const PEXELS_VIDEO_API_BASE_URL = 'https://api.pexels.com/videos'; // Note: different base for videos
+// قاعدة روابط Pexels API
+const PEXELS_API_BASE_URL = 'https://api.pexels.com/v1 ';
+const PEXELS_VIDEO_API_BASE_URL = 'https://api.pexels.com/videos ';
 
-// Default parameters for search
+// القيم الافتراضية للبحث
 const DEFAULT_PER_PAGE = 15;
-const DEFAULT_ORIENTATION = 'landscape'; // or 'portrait', 'square'
-const DEFAULT_SIZE = 'medium'; // 'small', 'medium', 'large' or specific px values via custom
+const DEFAULT_ORIENTATION = 'landscape'; // 'landscape', 'portrait', 'square'
+const DEFAULT_SIZE = 'medium'; // 'small', 'medium', 'large'
 
+/**
+ * العميل الخاص بـ Pexels API
+ */
 const pexelsApiClient = {
   /**
-   * Checks if the Pexels API client is configured and ready to use.
-   * @returns {boolean} True if API key is available, false otherwise.
+   * التحقق من تهيئة العميل
+   * @returns {boolean} true إذا كان العميل جاهزًا
    */
   isConfigured() {
     return !!PEXELS_API_KEY_VALUE;
   },
 
   /**
-   * Performs a request to the Pexels API.
+   * إجراء طلب إلى Pexels API
    * @private
-   * @param {string} endpoint - The API endpoint (e.g., '/search', '/videos/search').
-   * @param {Record<string, string | number>} params - Query parameters for the request.
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger instance.
-   * @param {string} [baseUrl=PEXELS_API_BASE_URL] - The base URL for the API.
-   * @returns {Promise<Object>} The JSON response from Pexels API.
-   * @throws {Error} If the request fails or API key is missing.
+   * @param {string} endpoint - النقطة النهائية للطلب
+   * @param {Object} params - معلمات الطلب
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @param {string} [baseUrl=PEXELS_API_BASE_URL] - رابط القاعدة
+   * @returns {Promise<Object>} - وعد بالنتيجة
    */
   async _request(endpoint, params, errorLogger = console, baseUrl = PEXELS_API_BASE_URL) {
     if (!this.isConfigured()) {
-      const err = new Error('Pexels API key is not configured. Cannot make requests.');
-      (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-        message: err.message,
-        origin: 'PexelsApiClient._request'
-      });
+      const err = new Error('مفتاح Pexels API غير مهيأ. لا يمكن إرسال الطلبات.');
+      this._logWarning(errorLogger, err.message, 'PexelsApiClient._request');
       throw err;
     }
-
+    
     const queryString = new URLSearchParams(params).toString();
     const url = `${baseUrl}${endpoint}?${queryString}`;
-
+    
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -67,182 +124,323 @@ const pexelsApiClient = {
           'Content-Type': 'application/json',
         },
       });
-
+      
       if (!response.ok) {
         let errorData;
+        
         try {
-            errorData = await response.json(); // Pexels usually returns JSON errors
+          errorData = await response.json();
         } catch (e) {
-            errorData = { error: await response.text().catch(() => 'Unknown error format') };
+          errorData = { error: await response.text().catch(() => 'تنسيق غير معروف') };
         }
-        const errMessage = `Pexels API request failed with status ${response.status}: ${errorData.error || JSON.stringify(errorData)}`;
+        
+        const errMessage = `فشل طلب Pexels API مع حالة ${response.status}: ${errorData.error || JSON.stringify(errorData)}`;
         throw new Error(errMessage);
       }
+      
       return await response.json();
     } catch (error) {
-      (errorLogger.handleError || errorLogger.error)?.call(errorLogger, {
-        error: error instanceof Error ? error : new Error(String(error)),
-        message: `Error during Pexels API request to "${endpoint}". ${error.message}`,
-        origin: 'PexelsApiClient._request',
-        context: { endpoint, params, url }
-      });
+      this._handleError(errorLogger, error, `طلب Pexels API إلى "${endpoint}"`, { endpoint, params, url });
       throw error instanceof Error ? error : new Error(String(error));
     }
   },
 
   /**
-   * Searches for photos on Pexels.
-   * @param {string} query - The search term.
-   * @param {Object} [options={}] - Additional search options.
-   * @param {number} [options.per_page=DEFAULT_PER_PAGE] - Number of results per page.
-   * @param {number} [options.page=1] - The page number to retrieve.
-   * @param {'landscape' | 'portrait' | 'square'} [options.orientation=DEFAULT_ORIENTATION] - Photo orientation.
-   * @param {'large' | 'medium' | 'small' | 'large2x' | 'original' | 'tiny'} [options.size] - Size of photos. (Note: Pexels uses src object for sizes)
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object>} Pexels API response for photos.
-   * Sample response: { photos: [{ id, width, height, url, photographer, src: { original, large2x, large, medium, small, portrait, landscape, tiny } }], page, per_page, total_results, next_page }
+   * البحث عن صور على Pexels
+   * @param {string} query - العبارة البحثية
+   * @param {Object} [options={}] - خيارات البحث
+   * @param {number} [options.per_page=DEFAULT_PER_PAGE] - عدد النتائج في الصفحة
+   * @param {number} [options.page=1] - رقم الصفحة
+   * @param {'landscape' | 'portrait' | 'square'} [options.orientation=DEFAULT_ORIENTATION] - اتجاه الصورة
+   * @param {'large' | 'medium' | 'small' | 'large2x' | 'original' | 'tiny'} [options.size] - حجم الصورة
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<PexelsSearchResult>} - وعد بنتائج البحث
    */
   async searchPhotos(query, options = {}, errorLogger = console) {
     if (!query || typeof query !== 'string' || !query.trim()) {
-        const errMsg = "Search query is required for Pexels photo search.";
-        (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-            message: errMsg, origin: 'PexelsApiClient.searchPhotos'
-        });
-        throw new Error(errMsg);
+      const errMsg = "العبارة البحثية مطلوبة للبحث عن الصور على Pexels.";
+      this._logWarning(errorLogger, errMsg, 'PexelsApiClient.searchPhotos');
+      throw new Error(errMsg);
     }
+    
     const params = {
       query,
       per_page: options.per_page || DEFAULT_PER_PAGE,
       page: options.page || 1,
       orientation: options.orientation || DEFAULT_ORIENTATION,
-      ...(options.size && { size: options.size }), // Size for curation/featured. For search, rely on `src` object.
+      ...(options.size && { size: options.size })
     };
+    
     return this._request('/search', params, errorLogger, PEXELS_API_BASE_URL);
   },
 
   /**
-   * Searches for videos on Pexels.
-   * @param {string} query - The search term.
-   * @param {Object} [options={}] - Additional search options.
-   * @param {number} [options.per_page=5] - Number of results per page (Pexels video default might be lower).
-   * @param {number} [options.page=1] - The page number to retrieve.
-   * @param {'landscape' | 'portrait' | 'square'} [options.orientation] - Video orientation.
-   * @param {'small' | 'medium' | 'large'} [options.size] - Min width: small (960px), medium (1920px), large (4k).
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object>} Pexels API response for videos.
-   * Sample response: { videos: [{ id, width, height, url, image (poster), duration, user: { id, name, url }, video_files: [{ id, quality ('hd', 'sd'), file_type, width, height, link }], video_pictures: [{ id, picture, nr }] }], page, per_page, total_results, next_page }
+   * البحث عن فيديوهات على Pexels
+   * @param {string} query - العبارة البحثية
+   * @param {Object} [options={}] - خيارات البحث
+   * @param {number} [options.per_page=5] - عدد النتائج في الصفحة
+   * @param {number} [options.page=1] - رقم الصفحة
+   * @param {'landscape' | 'portrait' | 'square'} [options.orientation] - اتجاه الفيديو
+   * @param {'small' | 'medium' | 'large'} [options.size] - الحد الأدنى للعرض
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<PexelsVideoSearchResult>} - وعد بنتائج البحث
    */
   async searchVideos(query, options = {}, errorLogger = console) {
     if (!query || typeof query !== 'string' || !query.trim()) {
-        const errMsg = "Search query is required for Pexels video search.";
-        (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-            message: errMsg, origin: 'PexelsApiClient.searchVideos'
-        });
-        throw new Error(errMsg);
+      const errMsg = "العبارة البحثية مطلوبة للبحث عن الفيديوهات على Pexels.";
+      this._logWarning(errorLogger, errMsg, 'PexelsApiClient.searchVideos');
+      throw new Error(errMsg);
     }
+    
     const params = {
       query,
-      per_page: options.per_page || 5, // Videos often have fewer results
+      per_page: options.per_page || 5,
       page: options.page || 1,
       ...(options.orientation && { orientation: options.orientation }),
-      ...(options.size && { size: options.size }),
+      ...(options.size && { size: options.size })
     };
+    
     return this._request('/search', params, errorLogger, PEXELS_VIDEO_API_BASE_URL);
   },
 
   /**
-   * Gets curated photos.
-   * @param {Object} [options={}] - Options like per_page, page.
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object>} Pexels API response for curated photos.
+   * الحصول على الصور المميزة
+   * @param {Object} [options={}] - خيارات البحث
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<PexelsSearchResult>} - وعد بنتائج الصور المميزة
    */
   async getCuratedPhotos(options = {}, errorLogger = console) {
     const params = {
       per_page: options.per_page || DEFAULT_PER_PAGE,
-      page: options.page || 1,
+      page: options.page || 1
     };
+    
     return this._request('/curated', params, errorLogger, PEXELS_API_BASE_URL);
   },
 
   /**
-   * Gets popular videos.
-   * @param {Object} [options={}] - Options like per_page, page, min_width, min_height, min_duration, max_duration.
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object>} Pexels API response for popular videos.
+   * الحصول على الفيديوهات الشائعة
+   * @param {Object} [options={}] - خيارات البحث
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<PexelsVideoSearchResult>} - وعد بنتائج الفيديوهات الشائعة
    */
   async getPopularVideos(options = {}, errorLogger = console) {
     const params = {
       per_page: options.per_page || 5,
       page: options.page || 1,
-      // Add other specific popular video params if needed
-      // min_width, min_height, min_duration, max_duration
-      ...(options.min_width && {min_width: options.min_width}),
-      ...(options.min_duration && {min_duration: options.min_duration}),
+      ...(options.min_width && { min_width: options.min_width }),
+      ...(options.min_duration && { min_duration: options.min_duration })
     };
+    
     return this._request('/popular', params, errorLogger, PEXELS_VIDEO_API_BASE_URL);
   },
 
   /**
-   * Retrieves a specific photo by its ID.
-   * @param {number | string} photoId - The ID of the photo.
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object>} Pexels API response for a single photo.
+   * الحصول على صورة بحسب معرفها
+   * @param {number | string} photoId - معرف الصورة
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<PexelsPhoto>} - وعد ببيانات الصورة
    */
   async getPhotoById(photoId, errorLogger = console) {
     if (!photoId) {
-        const errMsg = "Photo ID is required.";
-        (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-            message: errMsg, origin: 'PexelsApiClient.getPhotoById'
-        });
-        throw new Error(errMsg);
+      const errMsg = "معرف الصورة مطلوب.";
+      this._logWarning(errorLogger, errMsg, 'PexelsApiClient.getPhotoById');
+      throw new Error(errMsg);
     }
+    
     return this._request(`/photos/${photoId}`, {}, errorLogger, PEXELS_API_BASE_URL);
   },
 
   /**
-   * Retrieves a specific video by its ID.
-   * @param {number | string} videoId - The ID of the video.
-   * @param {import('../core/error-logger.js').default | Console} [errorLogger=console] - Error logger.
-   * @returns {Promise<Object>} Pexels API response for a single video.
+   * الحصول على فيديو بحسب معرفه
+   * @param {number | string} videoId - معرف الفيديو
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<PexelsVideo>} - وعد ببيانات الفيديو
    */
   async getVideoById(videoId, errorLogger = console) {
     if (!videoId) {
-        const errMsg = "Video ID is required.";
-        (errorLogger.logWarning || errorLogger.warn)?.call(errorLogger, {
-            message: errMsg, origin: 'PexelsApiClient.getVideoById'
-        });
-        throw new Error(errMsg);
+      const errMsg = "معرف الفيديو مطلوب.";
+      this._logWarning(errorLogger, errMsg, 'PexelsApiClient.getVideoById');
+      throw new Error(errMsg);
     }
+    
     return this._request(`/videos/${videoId}`, {}, errorLogger, PEXELS_VIDEO_API_BASE_URL);
-  }
+  },
 
-  // You can add more specific Pexels API methods as needed (e.g., featured collections)
+  /**
+   * الحصول على أفضل رابط لصورة بحسب الجودة
+   * @param {PexelsPhoto} photo - بيانات الصورة
+   * @param {'original' | 'large2x' | 'large' | 'medium' | 'small' | 'portrait' | 'landscape' | 'tiny'} [quality='original'] - الجودة المطلوبة
+   * @returns {string} - الرابط المناسب
+   */
+  getPhotoUrl(photo, quality = 'original') {
+    if (!photo || !photo.src || !photo.src[quality]) {
+      return null;
+    }
+    
+    return photo.src[quality];
+  },
+
+  /**
+   * الحصول على أفضل رابط لفيديو بحسب الجودة
+   * @param {PexelsVideo} video - بيانات الفيديو
+   * @param {'hd' | 'sd'} [quality='hd'] - الجودة المطلوبة
+   * @returns {string} - الرابط المناسب
+   */
+  getVideoUrl(video, quality = 'hd') {
+    if (!video || !video.video_files || !Array.isArray(video.video_files)) {
+      return null;
+    }
+    
+    const bestQuality = video.video_files.find(file => file.quality === quality);
+    
+    if (bestQuality && bestQuality.link) {
+      return bestQuality.link;
+    }
+    
+    if (video.video_files.length > 0 && video.video_files[0].link) {
+      return video.video_files[0].link;
+    }
+    
+    return null;
+  },
+
+  /**
+   * الحصول على أفضل دقة لصورة
+   * @param {PexelsPhoto} photo - بيانات الصورة
+   * @returns {string} - الرابط بأفضل دقة
+   */
+  getBestResolutionPhoto(photo) {
+    return this.getPhotoUrl(photo, 'original');
+  },
+
+  /**
+   * الحصول على أفضل دقة لفيديو
+   * @param {PexelsVideo} video - بيانات الفيديو
+   * @returns {string} - الرابط بأفضل دقة
+   */
+  getBestResolutionVideo(video) {
+    return this.getVideoUrl(video, 'hd');
+  },
+
+  /**
+   * التحقق من صحة معلمات البحث
+   * @param {Object} params - معلمات البحث
+   * @returns {boolean} true إذا كانت المعلمات صحيحة
+   */
+  validateSearchParams(params) {
+    if (!params || typeof params !== 'object') {
+      return false;
+    }
+    
+    if (params.query && typeof params.query !== 'string') {
+      return false;
+    }
+    
+    if (params.per_page && (typeof params.per_page !== 'number' || params.per_page <= 0)) {
+      return false;
+    }
+    
+    if (params.page && (typeof params.page !== 'number' || params.page <= 0)) {
+      return false;
+    }
+    
+    if (params.orientation && !['landscape', 'portrait', 'square'].includes(params.orientation)) {
+      return false;
+    }
+    
+    if (params.size && !['small', 'medium', 'large', 'large2x', 'original', 'tiny'].includes(params.size)) {
+      return false;
+    }
+    
+    if (params.min_width && (typeof params.min_width !== 'number' || params.min_width <= 0)) {
+      return false;
+    }
+    
+    if (params.min_duration && (typeof params.min_duration !== 'number' || params.min_duration <= 0)) {
+      return false;
+    }
+    
+    return true;
+  },
+
+  /**
+   * تنسيق العبارة البحثية
+   * @param {string} query - العبارة الأصلية
+   * @returns {string} - العبارة المنقاة
+   */
+  formatSearchQuery(query) {
+    if (!query || typeof query !== 'string') {
+      return '';
+    }
+    
+    return query.trim().replace(/\s+/g, ' ');
+  },
+
+  /**
+   * تسجيل خطأ
+   * @param {Object} logger - مسجل الأخطاء
+   * @param {Error} error - الكائن الخاص بالخطأ
+   * @param {string} message - رسالة الخطأ
+   * @param {Object} context - سياق الخطأ
+   */
+  _handleError(logger, error, message, context) {
+    if (logger.handleError) {
+      logger.handleError(error, message, 'PexelsApiClient', context);
+    } else if (logger.error) {
+      logger.error(message, error, context);
+    } else {
+      logger.error(message, error, context);
+    }
+  },
+
+  /**
+   * تسجيل تحذير
+   * @param {Object} logger - مسجل الأخطاء
+   * @param {string} message - رسالة التحذير
+   * @param {string} origin - مصدر التحذير
+   */
+  _logWarning(logger, message, origin) {
+    if (logger.logWarning) {
+      logger.logWarning({ message, origin });
+    } else if (logger.warn) {
+      logger.warn(message);
+    } else {
+      logger.warn(message);
+    }
+  }
 };
 
-// How this client is typically initialized or used:
-// 1. In moduleBootstrap.js, you might "provide" this instance if it's configured.
-//    This would involve `main.js` awaiting the dynamic import of api-keys.config.js
-//    before calling moduleBootstrap.
-// 2. Or, features that use Pexels import pexelsApiClient directly and always call `isConfigured()`
-//    before attempting to use its methods, and handle the case where it's not configured.
+/**
+ * تهيئة العميل الخاص بـ Pexels API
+ * @param {Object} [dependencies] - التبعيات الاختيارية
+ */
+export function initializePexelsApiClient(dependencies = {}) {
+  const { errorLogger } = dependencies;
+  
+  try {
+    console.info('[PexelsApiClient] تم تهيئته بنجاح');
+    
+    // جعل الوظائف متاحة عالميًا لتسهيل التصحيح
+    if (typeof window !== 'undefined' && 
+        (typeof process === 'undefined' || process.env.NODE_ENV === 'development')) {
+      window.pexelsApiClient = {
+        ...pexelsApiClient
+      };
+    }
+    
+    return {
+      ...pexelsApiClient
+    };
+  } catch (error) {
+    if (errorLogger) {
+      errorLogger.logError(error, 'فشل في تهيئة PexelsApiClient');
+    } else {
+      console.error('[PexelsApiClient] فشل في التهيئة:', error);
+    }
+    
+    return {};
+  }
+}
 
-// Example for moduleBootstrap:
-// (This would require pexelsApiClient to be an instance potentially initialized asynchronously
-// if the API key loading itself is async within this file)
-//
-// export async function initializePexelsApiClient(dependencies) {
-//   const { errorLogger } = dependencies;
-//   // The API key is already attempted to load at the top of this file.
-//   if (pexelsApiClient.isConfigured()) {
-//     // console.info('[PexelsApiClientWrapper] Initialized and configured.');
-//     // Inject errorLogger into the client if its methods need it directly and aren't already passed
-//     // pexelsApiClient.setErrorLogger(errorLogger); // If such method exists
-//     return pexelsApiClient;
-//   } else {
-//     // console.warn('[PexelsApiClientWrapper] Pexels API not configured (missing API key).');
-//     return null; // Or an object with a no-op interface
-//   }
-// }
-
-// If PEXELS_API_KEY_VALUE remains null, methods will throw error due to isConfigured() check.
 export default pexelsApiClient;
