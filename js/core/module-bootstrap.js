@@ -1,125 +1,246 @@
-// js/core/module-bootstrap.js
+/**
+ * @fileoverview وحدة تهيئة الوحدات الأساسية للتطبيق مع إدارة متقدمة للتبعيات
+ * @module module-bootstrap
+ */
 
-// Note: This module does NOT import the actual initialize functions from features/shared-ui.
-// Those imports happen in `main.js`, and an array of module configurations (moduleConfigs)
-// is passed to `initializeAllModules`. This makes module-bootstrap.js more generic.
-
+/**
+ * وحدة تهيئة الوحدات الأساسية للتطبيق مع إدارة التبعيات
+ */
 const moduleBootstrap = {
   /**
-   * Initializes all registered modules based on the provided configurations.
-   * Iterates through the moduleConfigs array, resolves dependencies, and calls
-   * the initFn for each module. If an initFn returns a value and the config
-   * specifies a 'provides' key, that returned value is added to the pool of
-   * available services for subsequent modules.
-   *
-   * @param {Object} coreServices - An object containing core, app-wide services.
-   * @param {import('./state-store.js').default} coreServices.stateStore
-   * @param {import('./event-aggregator.js').default} coreServices.eventAggregator
-   * @param {import('./error-logger.js').default} coreServices.errorLogger
-   * @param {import('./resource-manager.js').default} [coreServices.resourceManager]
-   * @param {import('./localization.service.js').default | ReturnType<import('./localization.service.js').initializeLocalizationService>} [coreServices.localizationService] // Could be instance or the raw module
-   * @param {import('../services/local-storage.adapter.js').default} [coreServices.localStorageAdapter]
-   * @param {import('../services/quran.api.client.js').default} [coreServices.quranApiClient]
-   * @param {import('../services/pexels.api.client.js').default} [coreServices.pexelsAPI] // Note the key change for consistency
-   * @param {import('../services/speech.recognition.wrapper.js').default} [coreServices.speechRecognitionWrapper]
-   * @param {import('../services/file.io.utils.js').default} [coreServices.fileIOUtils]
-   * // Add other globally available core services or utility instances here
-   *
-   * @param {Array<ModuleConfig>} moduleConfigs - An array of module configurations from main.js.
-   *
-   * @typedef {Object} ModuleConfig
-   * @property {string} name - Descriptive name of the module (for logging).
-   * @property {Function} initFn - The initialization function (async or sync) that takes a dependencies object.
-   * @property {string[]} [dependencies] - Array of dependency names (keys in coreServices or from other modules' 'provides').
-   * @property {string} [provides] - If the initFn returns a service/API, this is the key it will be registered under for other modules.
-   *
+   * يُهيئ جميع الوحدات المسجلة استنادًا إلى التكوينات المقدمة
+   * @param {Object} coreServices - كائن يحتوي على الخدمات الأساسية للتطبيق
+   * @param {ModuleConfig[]} moduleConfigs - مصفوفة من تكوينات الوحدات
    * @returns {Promise<void>}
    */
   async initializeAllModules(coreServices, moduleConfigs = []) {
-    // Use the errorLogger from coreServices, or fallback to console if not provided (should always be provided)
+    // التأكد من توفر خدمة تسجيل الأخطاء
     const errorLogger = coreServices.errorLogger || console;
+    
+    // التأكد من صحة المدخلات
+    if (!coreServices || typeof coreServices !== 'object') {
+      this._logError(errorLogger, {
+        message: 'الخدمات الأساسية غير معرفة أو غير صحيحة',
+        origin: 'moduleBootstrap.initializeAllModules',
+        severity: 'critical'
+      });
+      return;
+    }
 
-    // console.info('[ModuleBootstrap] Starting initialization of all configured modules...');
+    if (!Array.isArray(moduleConfigs)) {
+      this._logError(errorLogger, {
+        message: 'تكوينات الوحدات يجب أن تكون مصفوفة',
+        origin: 'moduleBootstrap.initializeAllModules',
+        severity: 'critical'
+      });
+      return;
+    }
 
-    // `availableServicesAndInstances` will hold core services and any APIs/instances
-    // returned by modules that have a 'provides' key in their config.
+    // إعداد الخدمات المتوفرة
     const availableServicesAndInstances = { ...coreServices };
+    
+    // تسجيل بدء تهيئة الوحدات
+    this._logDebug(errorLogger, '[ModuleBootstrap] Starting initialization of all configured modules...');
 
+    // معالجة كل وحدة على حدة
     for (const moduleConfig of moduleConfigs) {
-      if (!moduleConfig || typeof moduleConfig.name !== 'string' || typeof moduleConfig.initFn !== 'function') {
-        (errorLogger.logWarning || errorLogger.warn).call(errorLogger, {
-          message: `Invalid module configuration object encountered. Skipping.`,
-          origin: 'moduleBootstrap.initializeAllModules',
-          context: { receivedConfig: moduleConfig }
-        });
-        continue;
-      }
-
-      const { name, initFn, dependencies = [], provides } = moduleConfig;
-      // console.debug(`[ModuleBootstrap] Preparing to initialize module: "${name}"`);
-
       try {
-        const moduleDependencies = {};
-        let allDepsMet = true;
-
-        // Resolve dependencies for the current module
-        for (const depName of dependencies) {
-          if (Object.prototype.hasOwnProperty.call(availableServicesAndInstances, depName)) {
-            moduleDependencies[depName] = availableServicesAndInstances[depName];
-          } else {
-            (errorLogger.logWarning || errorLogger.warn).call(errorLogger, {
-              message: `Dependency "${depName}" NOT FOUND for module "${name}". This module might not function correctly or at all.`,
-              origin: 'moduleBootstrap.resolveDependencies',
-              context: { module: name, missingDependency: depName, available: Object.keys(availableServicesAndInstances) }
-            });
-            allDepsMet = false;
-            // Decide on behavior: continue with missing deps, or throw to halt?
-            // For robustness, we might continue, but log a severe warning.
-            // If a critical dependency like 'stateStore' is missing and listed, it's likely a config error.
-          }
+        // التحقق من صحة تكوين الوحدة
+        if (!this._isValidModuleConfig(moduleConfig)) {
+          this._logWarning(errorLogger, {
+            message: `تكوين الوحدة غير صالح، سيتم تجاوزه`,
+            origin: 'moduleBootstrap.validateModuleConfig',
+            context: { receivedConfig: moduleConfig }
+          });
+          continue;
         }
 
-        // If critical dependencies are missing, you might choose to not initialize the module
-        // if (!allDepsMet && name !== 'ErrorLoggerModule') { // Example: allow error logger to init even if others fail
-        //   throw new Error(`Cannot initialize module "${name}" due to missing critical dependencies.`);
-        // }
+        const { name, initFn, dependencies = [], provides } = moduleConfig;
+        
+        this._logDebug(errorLogger, `[ModuleBootstrap] Preparing to initialize module: "${name}"`);
 
-        // Call the module's initialization function
-        // console.debug(`[ModuleBootstrap] Initializing "${name}" with dependencies:`, Object.keys(moduleDependencies));
-        const moduleAPIOrInstance = await initFn(moduleDependencies); // Await in case initFn is async
+        // حل التبعيات
+        const moduleDependencies = await this._resolveDependencies(
+          errorLogger, 
+          availableServicesAndInstances, 
+          name, 
+          dependencies
+        );
 
-        // If the module's initFn returns an API/instance and `provides` key is set,
-        // add it to `availableServicesAndInstances` for subsequent modules.
-        if (provides && typeof provides === 'string') {
-          if (moduleAPIOrInstance !== undefined) { // Allow null to be a valid "provided" value
-            availableServicesAndInstances[provides] = moduleAPIOrInstance;
-            // console.info(`[ModuleBootstrap] Module "${name}" initialized and provided: "${provides}"`);
-          } else {
-            (errorLogger.logWarning || errorLogger.warn).call(errorLogger, {
-              message: `Module "${name}" was configured with 'provides: "${provides}"' but its initFn returned undefined.`,
-              origin: 'moduleBootstrap.initializeAllModules',
-              context: { module: name }
-            });
-          }
-        } else if (moduleAPIOrInstance !== undefined) {
-          // console.info(`[ModuleBootstrap] Module "${name}" initialized (initFn returned a value but no 'provides' key).`);
-        } else {
-          // console.info(`[ModuleBootstrap] Module "${name}" initialized (initFn did not return a value).`);
-        }
+        // تهيئة الوحدة
+        const moduleAPIOrInstance = await initFn(moduleDependencies);
+
+        // تسجيل الخدمة إذا كانت متوفرة
+        await this._registerProvidedService(
+          errorLogger,
+          availableServicesAndInstances,
+          name,
+          provides,
+          moduleAPIOrInstance
+        );
 
       } catch (error) {
-        (errorLogger.handleError || errorLogger.error).call(errorLogger, {
-          error: error instanceof Error ? error : new Error(String(error)),
-          message: `CRITICAL: Failed to initialize module "${name}". This may affect application stability or functionality of dependent modules.`,
-          origin: `moduleBootstrap.init(${name})`,
-          severity: 'error', // Elevate severity for module init failures
-          context: { moduleName: name }
-        });
-        // Option: Re-throw to halt all bootstrapping if a critical module fails
-        // throw error; 
+        this._handleModuleInitError(errorLogger, error, moduleConfig.name);
       }
     }
-    // console.info('[ModuleBootstrap] All configured modules have been processed.');
+
+    this._logInfo(errorLogger, '[ModuleBootstrap] All configured modules have been processed.');
+  },
+
+  /**
+   * التحقق من صحة تكوين الوحدة
+   * @param {ModuleConfig} moduleConfig - تكوين الوحدة
+   * @returns {boolean} - هل التكوين صالح؟
+   * @private
+   */
+  _isValidModuleConfig(moduleConfig) {
+    return moduleConfig && 
+           typeof moduleConfig.name === 'string' && 
+           typeof moduleConfig.initFn === 'function';
+  },
+
+  /**
+   * حل تبعيات الوحدة
+   * @param {Object} errorLogger - خدمة تسجيل الأخطاء
+   * @param {Object} availableServices - الخدمات المتوفرة
+   * @param {string} moduleName - اسم الوحدة
+   * @param {string[]} dependencies - قائمة التبعيات المطلوبة
+   * @returns {Object} - الكائن الذي يحتوي على التبعيات المحللة
+   * @private
+   */
+  _resolveDependencies(errorLogger, availableServices, moduleName, dependencies) {
+    const moduleDependencies = {};
+    let allDepsMet = true;
+
+    for (const depName of dependencies) {
+      if (availableServices.hasOwnProperty(depName)) {
+        moduleDependencies[depName] = availableServices[depName];
+      } else {
+        this._logWarning(errorLogger, {
+          message: `التبعية "${depName}" غير موجودة للوحدة "${moduleName}"`,
+          origin: 'moduleBootstrap.resolveDependencies',
+          context: { 
+            module: moduleName, 
+            missingDependency: depName, 
+            available: Object.keys(availableServices) 
+          }
+        });
+        allDepsMet = false;
+      }
+    }
+
+    if (!allDepsMet) {
+      this._logWarning(errorLogger, {
+        message: `بعض التبعيات مفقودة للوحدة "${moduleName}"`,
+        origin: 'moduleBootstrap.resolveDependencies',
+        context: { module: moduleName }
+      });
+    }
+
+    return moduleDependencies;
+  },
+
+  /**
+   * تسجيل الخدمة المقدمة من الوحدة
+   * @param {Object} errorLogger - خدمة تسجيل الأخطاء
+   * @param {Object} availableServices - الخدمات المتوفرة
+   * @param {string} moduleName - اسم الوحدة
+   * @param {string} provides - اسم الخدمة المقدمة
+   * @param {*} serviceInstance - نسخة الخدمة
+   * @private
+   */
+  _registerProvidedService(errorLogger, availableServices, moduleName, provides, serviceInstance) {
+    if (provides && typeof provides === 'string') {
+      if (serviceInstance !== undefined) {
+        availableServices[provides] = serviceInstance;
+        this._logInfo(errorLogger, `[ModuleBootstrap] Module "${moduleName}" initialized and provided: "${provides}"`);
+      } else {
+        this._logWarning(errorLogger, {
+          message: `الوحدة "${moduleName}" مُكوَّنة لتوفير "${provides}" ولكنها لم تُرجع قيمة`,
+          origin: 'moduleBootstrap.registerProvidedService',
+          context: { module: moduleName }
+        });
+      }
+    } else if (serviceInstance !== undefined) {
+      this._logDebug(errorLogger, `[ModuleBootstrap] Module "${moduleName}" initialized (initFn returned a value but no 'provides' key).`);
+    } else {
+      this._logDebug(errorLogger, `[ModuleBootstrap] Module "${moduleName}" initialized (initFn did not return a value).`);
+    }
+  },
+
+  /**
+   * التعامل مع أخطاء تهيئة الوحدة
+   * @param {Object} errorLogger - خدمة تسجيل الأخطاء
+   * @param {Error} error - الكائن الخاص بالخطأ
+   * @param {string} moduleName - اسم الوحدة
+   * @private
+   */
+  _handleModuleInitError(errorLogger, error, moduleName) {
+    this._logError(errorLogger, {
+      error: error instanceof Error ? error : new Error(String(error)),
+      message: `فشل في تهيئة الوحدة "${moduleName}"`,
+      origin: `moduleBootstrap.init(${moduleName})`,
+      severity: 'error',
+      context: { moduleName }
+    });
+  },
+
+  /**
+   * تسجيل معلومات تفصيلية
+   * @param {Object} logger - خدمة التسجيل
+   * @param {string|Object} message - الرسالة للتسجيل
+   * @private
+   */
+  _logDebug(logger, message) {
+    if (typeof logger.debug === 'function') {
+      logger.debug(message);
+    }
+  },
+
+  /**
+   * تسجيل معلومات عادية
+   * @param {Object} logger - خدمة التسجيل
+   * @param {string|Object} message - الرسالة للتسجيل
+   * @private
+   */
+  _logInfo(logger, message) {
+    if (typeof logger.info === 'function') {
+      logger.info(message);
+    } else if (typeof logger.log === 'function') {
+      logger.log(message);
+    }
+  },
+
+  /**
+   * تسجيل تحذير
+   * @param {Object} logger - خدمة التسجيل
+   * @param {Object} warning - كائن يحتوي على تفاصيل التحذير
+   * @private
+   */
+  _logWarning(logger, warning) {
+    if (typeof logger.warn === 'function') {
+      logger.warn(warning);
+    } else if (typeof logger.warning === 'function') {
+      logger.warning(warning);
+    } else if (typeof logger.log === 'function') {
+      logger.log({ level: 'warning', ...warning });
+    }
+  },
+
+  /**
+   * تسجيل خطأ
+   * @param {Object} logger - خدمة التسجيل
+   * @param {Object} error - كائن يحتوي على تفاصيل الخطأ
+   * @private
+   */
+  _logError(logger, error) {
+    if (typeof logger.error === 'function') {
+      logger.error(error);
+    } else if (typeof logger.log === 'function') {
+      logger.log({ level: 'error', ...error });
+    } else {
+      console.error(error);
+    }
   }
 };
 
