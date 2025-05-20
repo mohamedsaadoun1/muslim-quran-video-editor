@@ -1,285 +1,536 @@
 // js/features/project-manager/project.actions.js
-
-import { ACTIONS, EVENTS, DEFAULT_PROJECT_SCHEMA, LS_KEY_SAVED_PROJECTS } from '../../config/app.constants.js';
-import DOMElements from '../../core/dom-elements.js'; // Needed if title is read from DOM on save
-
-// Dependencies will be injected via initializeProjectActions
-let dependencies = {
-  stateStore: {
-      getState: () => ({ currentProject: null, savedProjects: [], activeScreen: 'initial' }),
-      dispatch: () => {}
-  },
-  localStorageAdapter: { getItem: () => null, setItem: () => false, removeItem: () => {} },
-  errorLogger: console,
-  notificationServiceAPI: { showSuccess: () => {}, showError: () => {} },
-  eventAggregator: { publish: () => {} },
-  // modalFactoryAPI might be needed if prompting for new project name
-};
+import { 
+  ACTIONS, 
+  EVENTS, 
+  DEFAULT_PROJECT_SCHEMA,
+  LS_KEY_SAVED_PROJECTS,
+  APP_CONSTANTS
+} from '../../config/app.constants.js';
+import DOMElements from '../../core/dom-elements.js';
+import notificationPresenter from '../../shared-ui-components/notification.presenter.js';
+import modalFactory from '../../shared-ui-components/modal.factory.js';
+import timeFormatter from '../../utils/time.formatter.js';
 
 /**
- * Generates a simple unique ID (for demo purposes - consider UUID for production).
- * @private
+ * وظائف إدارة المشاريع
  */
-function _generateProjectId() {
-  return `project-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-}
-
-
-/**
- * Creates a new project object with default settings and a unique ID.
- * @param {Partial<import('../../core/state-store.js').ProjectState>} [initialOverrides] - Optional overrides for default project settings.
- * @returns {import('../../core/state-store.js').ProjectState} The new project object.
- */
-function createNewProjectObject(initialOverrides = {}) {
-  const now = Date.now();
-  // Deep clone DEFAULT_PROJECT_SCHEMA to avoid modifying it
-  const defaultProject = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
-  
-  const newProject = {
-    ...defaultProject,
-    id: _generateProjectId(),
-    title: initialOverrides.title || defaultProject.title || 'مشروع جديد', // Ensure title default
-    createdAt: now,
-    updatedAt: now,
-    // Merge any specific overrides deeply for nested structures like quranSelection
-    ...initialOverrides,
-    // Deep merge specific nested objects if provided in overrides
-    quranSelection: { ...defaultProject.quranSelection, ...(initialOverrides.quranSelection || {}) },
-    background: { ...defaultProject.background, ...(initialOverrides.background || {}) },
-    textStyle: { ...defaultProject.textStyle, ...(initialOverrides.textStyle || {}) },
-    videoComposition: { ...defaultProject.videoComposition, ...(initialOverrides.videoComposition || {}) },
-    exportSettings: { ...defaultProject.exportSettings, ...(initialOverrides.exportSettings || {}) },
+const projectActions = (() => {
+  // الاعتمادات
+  let dependencies = {
+    stateStore: { 
+      getState: () => ({ 
+        savedProjects: [], 
+        currentProject: null, 
+        activeScreen: 'initial' 
+      }),
+      dispatch: () => {},
+      subscribe: () => (() => {})
+    },
+    localStorageAdapter: { 
+      getItem: () => [], 
+      setItem: () => true, 
+      removeItem: () => {} 
+    },
+    errorLogger: console,
+    notificationServiceAPI: { 
+      showSuccess: (msg) => {}, 
+      showError: (msg) => {}, 
+      showWarning: (msg) => {}
+    },
+    eventAggregator: { publish: () => {}, subscribe: () => ({ unsubscribe: () => {} }) },
+    localizationService: { translate: key => key }
   };
-  return newProject;
-}
-
-/**
- * Action to load a new, empty project into the editor.
- * This involves creating a new project object and then dispatching LOAD_PROJECT.
- */
-function loadNewProject() {
-  const newProject = createNewProjectObject();
-  // console.debug('[ProjectActions] Created new project object:', newProject);
-  dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, newProject);
-  // stateStore's reducer for LOAD_PROJECT should also set activeScreen to 'editor'
-  dependencies.eventAggregator.publish(EVENTS.PROJECT_LOADED, newProject); // Inform other modules
-}
-
-/**
- * Loads an existing project by its ID.
- * Reads from localStorage and dispatches LOAD_PROJECT.
- * @param {string} projectId
- */
-function loadExistingProjectById(projectId) {
-  if (!projectId) {
-    (dependencies.errorLogger.logWarning || console.warn)('No projectId provided to loadExistingProjectById.');
-    return;
+  
+  // الحالة الحالية للمشروع
+  let currentProjectState = {
+    id: null,
+    title: null,
+    createdAt: null,
+    updatedAt: null
+  };
+  
+  /**
+   * إنشاء معرف مشروع جديد
+   * @private
+   * @returns {string} - معرف المشروع
+   */
+  function _generateProjectId() {
+    return `project-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
-  const savedProjects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
-  const projectToLoad = savedProjects.find(p => p.id === projectId);
-
-  if (projectToLoad) {
-    // console.debug('[ProjectActions] Loading existing project:', projectToLoad);
-    // Ensure project object has all default fields if some were missing from older saved versions
-    const defaultStructure = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
-    const hydratedProject = {
-        ...defaultStructure, // Start with defaults
-        ...projectToLoad,   // Override with saved data
-        // Deep merge nested objects to ensure new default fields are included
-        quranSelection: { ...defaultStructure.quranSelection, ...(projectToLoad.quranSelection || {}) },
-        background: { ...defaultStructure.background, ...(projectToLoad.background || {}) },
-        textStyle: { ...defaultStructure.textStyle, ...(projectToLoad.textStyle || {}) },
-        videoComposition: { ...defaultStructure.videoComposition, ...(projectToLoad.videoComposition || {}) },
-        exportSettings: { ...defaultStructure.exportSettings, ...(projectToLoad.exportSettings || {}) },
+  
+  /**
+   * إنشاء كائن مشروع جديد
+   * @param {Object} initialOverrides - الإعدادات الافتراضية
+   * @returns {Object} - المشروع الجديد
+   */
+  function createNewProjectObject(initialOverrides = {}) {
+    const now = Date.now();
+    const defaultProject = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
+    
+    return {
+      ...defaultProject,
+      id: _generateProjectId(),
+      title: initialOverrides.title || defaultProject.title || 'مشروع جديد',
+      createdAt: now,
+      updatedAt: now,
+      ...initialOverrides,
+      quranSelection: { 
+        ...defaultProject.quranSelection, 
+        ...(initialOverrides.quranSelection || {}) 
+      },
+      background: { 
+        ...defaultProject.background, 
+        ...(initialOverrides.background || {}) 
+      },
+      textStyle: { 
+        ...defaultProject.textStyle, 
+        ...(initialOverrides.textStyle || {}) 
+      },
+      videoComposition: { 
+        ...defaultProject.videoComposition, 
+        ...(initialOverrides.videoComposition || {}) 
+      },
+      exportSettings: { 
+        ...defaultProject.exportSettings, 
+        ...(initialOverrides.exportSettings || {}) 
+      }
     };
-    dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, hydratedProject);
-    dependencies.eventAggregator.publish(EVENTS.PROJECT_LOADED, hydratedProject);
-  } else {
-    (dependencies.errorLogger.logWarning || console.warn)(`Project with ID "${projectId}" not found in localStorage.`);
-    dependencies.notificationServiceAPI.showError(`المشروع المحدد غير موجود.`);
-  }
-}
-
-/**
- * Saves the current project (from stateStore) to localStorage.
- * Updates the `savedProjects` list in both stateStore and localStorage.
- */
-function saveCurrentProject() {
-  const currentProject = dependencies.stateStore.getState().currentProject;
-  if (!currentProject || !currentProject.id) {
-    (dependencies.errorLogger.logWarning || console.warn)('No current project in state to save.');
-    dependencies.notificationServiceAPI.showError('لا يوجد مشروع حالي ليتم حفظه.');
-    return false;
-  }
-
-  // Get the potentially edited title from the DOM element
-  let projectTitleFromDOM = DOMElements.currentProjectTitleEditor?.textContent?.trim();
-  if (!projectTitleFromDOM) {
-      projectTitleFromDOM = currentProject.title || DEFAULT_PROJECT_SCHEMA.title; // Fallback if DOM empty
   }
   
-  const projectToSave = {
-    ...currentProject,
-    title: projectTitleFromDOM, // Update title from DOM
-    updatedAt: Date.now(),
-  };
-
-  try {
-    let savedProjects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
-    const existingProjectIndex = savedProjects.findIndex(p => p.id === projectToSave.id);
-
-    if (existingProjectIndex > -1) {
-      savedProjects[existingProjectIndex] = projectToSave; // Update existing
-    } else {
-      savedProjects.push(projectToSave); // Add new
+  /**
+   * تحميل مشروع جديد في المحرر
+   */
+  function loadNewProject() {
+    try {
+      const newProject = createNewProjectObject();
+      dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, newProject);
+      dependencies.eventAggregator.publish(EVENTS.PROJECT_LOADED, newProject);
+      dependencies.notificationServiceAPI?.showSuccess(
+        dependencies.localizationService.translate('project.loaded.new') || 'تم تحميل مشروع جديد.'
+      );
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.create') || 'فشل في إنشاء مشروع جديد.',
+        origin: 'ProjectActions.loadNewProject'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.create.failed') || 'فشل في إنشاء مشروع جديد.'
+      );
+    }
+  }
+  
+  /**
+   * تحميل مشروع موجود من خلال المعرف
+   * @param {string} projectId - معرف المشروع
+   */
+  function loadExistingProjectById(projectId) {
+    if (!projectId) {
+      dependencies.errorLogger.warn({
+        message: dependencies.localizationService.translate('warning.project.id.required') || 'معرف المشروع غير موجود.',
+        origin: 'ProjectActions.loadExistingProjectById'
+      });
+      return;
     }
     
-    // Sort by updatedAt DESC before saving to localStorage and state
-    savedProjects.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-
-    const success = dependencies.localStorageAdapter.setItem(LS_KEY_SAVED_PROJECTS, savedProjects);
-    if (success) {
-      // Update stateStore's list of saved projects
-      dependencies.stateStore.dispatch(ACTIONS.UPDATE_SAVED_PROJECTS_LIST, savedProjects);
-      // Also update the currentProject in state store to reflect the new title and updatedAt timestamp
-      dependencies.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { title: projectToSave.title, updatedAt: projectToSave.updatedAt });
-
-      dependencies.notificationServiceAPI.showSuccess(`تم حفظ مشروع "${projectToSave.title}" بنجاح!`);
-      dependencies.eventAggregator.publish(EVENTS.PROJECT_SAVED, projectToSave);
-      // console.debug('[ProjectActions] Project saved:', projectToSave);
-      return true;
-    } else {
-      throw new Error('Failed to write to localStorage.');
-    }
-  } catch (error) {
-    (dependencies.errorLogger.handleError || console.error)({
-      error, message: 'فشل حفظ المشروع.', origin: 'ProjectActions.saveCurrentProject'
-    });
-    dependencies.notificationServiceAPI.showError('فشل حفظ المشروع. قد تكون مساحة التخزين ممتلئة.');
-    return false;
-  }
-}
-
-/**
- * Deletes a project by its ID from localStorage and state.
- * @param {string} projectId
- */
-function deleteProjectById(projectId) {
-  if (!projectId) {
-    (dependencies.errorLogger.logWarning || console.warn)('No projectId provided for deletion.');
-    return false;
-  }
-  try {
-    let savedProjects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
-    const newSavedProjects = savedProjects.filter(p => p.id !== projectId);
-
-    if (newSavedProjects.length === savedProjects.length) {
-      // Project not found, already deleted or invalid ID
-      (dependencies.errorLogger.logWarning || console.warn)(`Project with ID "${projectId}" not found for deletion.`);
-      return false; // Indicate project wasn't found to be deleted
-    }
-
-    const success = dependencies.localStorageAdapter.setItem(LS_KEY_SAVED_PROJECTS, newSavedProjects);
-    if (success) {
-      dependencies.stateStore.dispatch(ACTIONS.UPDATE_SAVED_PROJECTS_LIST, newSavedProjects);
-      dependencies.eventAggregator.publish(EVENTS.PROJECT_DELETED, { projectId }); // Inform others
-      // If the deleted project was the currentProject, unload it.
-      const currentProjectInState = dependencies.stateStore.getState().currentProject;
-      if (currentProjectInState && currentProjectInState.id === projectId) {
-        dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, null); // Unload project, which should set activeScreen to 'initial'
+    try {
+      const savedProjects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
+      const projectToLoad = savedProjects.find(p => p.id === projectId);
+      
+      if (projectToLoad) {
+        const hydratedProject = _deepHydrateProject(projectToLoad);
+        dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, hydratedProject);
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_LOADED, hydratedProject);
+        
+        dependencies.notificationServiceAPI?.showSuccess(
+          dependencies.localizationService.translate('project.loaded.success', { title: hydratedProject.title }) || 
+          `تم تحميل المشروع "${hydratedProject.title}" بنجاح.`
+        );
+      } else {
+        dependencies.errorLogger.warn({
+          message: dependencies.localizationService.translate('warning.project.not.found', { id: projectId }) || 
+                   `المشروع غير موجود: ${projectId}`,
+          origin: 'ProjectActions.loadExistingProjectById'
+        });
+        
+        dependencies.notificationServiceAPI?.showError(
+          dependencies.localizationService.translate('project.load.failed', { id: projectId }) || 
+          `فشل في تحميل المشروع ${projectId}`
+        );
       }
-      // console.debug(`[ProjectActions] Project deleted: ${projectId}`);
-      return true;
-    } else {
-      throw new Error('Failed to update localStorage after deletion.');
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.load', { id: projectId }) || 
+                 `فشل في تحميل المشروع ${projectId}`,
+        origin: 'ProjectActions.loadExistingProjectById'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.load.failed', { id: projectId }) || 
+        `فشل في تحميل المشروع ${projectId}`
+      );
     }
-  } catch (error) {
-    (dependencies.errorLogger.handleError || console.error)({
-      error, message: 'فشل حذف المشروع.', origin: 'ProjectActions.deleteProjectById'
-    });
-    dependencies.notificationServiceAPI.showError('فشل حذف المشروع.');
-    return false;
   }
-}
-
-
-/**
- * Loads all projects from localStorage into the state store.
- * Typically called once on application startup.
- */
-function loadAllSavedProjectsFromStorage() {
-    const projects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
-    // Ensure projects have all default fields from current schema before putting into state
-    const defaultStructure = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
-    const hydratedProjects = projects.map(p => ({
+  
+  /**
+   * حفظ المشروع الحالي إلى التخزين المحلي
+   * @returns {boolean} هل تمت العملية؟
+   */
+  function saveCurrentProject() {
+    const currentState = dependencies.stateStore.getState();
+    const currentProject = currentState.currentProject;
+    
+    if (!currentProject || !currentProject.id) {
+      dependencies.errorLogger.warn({
+        message: dependencies.localizationService.translate('warning.project.no.current') || 'لا يوجد مشروع حالي.',
+        origin: 'ProjectActions.saveCurrentProject'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.save.no.current') || 'لا يوجد مشروع حالي للحفظ.'
+      );
+      
+      return false;
+    }
+    
+    try {
+      // الحصول على عنوان المشروع من DOM
+      let projectTitleFromDOM = DOMElements.getProjectTitleInput?.textContent?.trim() || 
+                               currentProject.title || 
+                               DEFAULT_PROJECT_SCHEMA.title;
+      
+      // تحديث بيانات المشروع
+      const projectToSave = {
+        ...currentProject,
+        title: projectTitleFromDOM,
+        updatedAt: Date.now()
+      };
+      
+      // قراءة البيانات من التخزين
+      let savedProjects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
+      
+      // التحقق من وجود المشروع
+      const existingProjectIndex = savedProjects.findIndex(p => p.id === projectToSave.id);
+      
+      // تحديث أو إضافة المشروع
+      if (existingProjectIndex > -1) {
+        savedProjects[existingProjectIndex] = projectToSave;
+      } else {
+        savedProjects.push(projectToSave);
+      }
+      
+      // ترتيب المشاريع حسب التاريخ
+      savedProjects.sort((a, b) => {
+        return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+      });
+      
+      // حفظ البيانات
+      const success = dependencies.localStorageAdapter.setItem(LS_KEY_SAVED_PROJECTS, savedProjects);
+      
+      if (success) {
+        dependencies.stateStore.dispatch(ACTIONS.UPDATE_SAVED_PROJECTS_LIST, savedProjects);
+        dependencies.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, {
+          title: projectTitleFromDOM,
+          updatedAt: projectToSave.updatedAt
+        });
+        
+        dependencies.notificationServiceAPI?.showSuccess(
+          dependencies.localizationService.translate('project.saved.success', { title: projectTitleFromDOM }) || 
+          `تم حفظ مشروع "${projectTitleFromDOM}" بنجاح!`
+        );
+        
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_SAVED, projectToSave);
+        return true;
+      } else {
+        throw new Error('فشل في كتابة البيانات إلى التخزين المحلي.');
+      }
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.save', { title: currentProject.title }) || 
+                 'فشل حفظ المشروع.',
+        origin: 'ProjectActions.saveCurrentProject'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.save.failed', { title: currentProject.title }) || 
+        `فشل حفظ المشروع "${currentProject.title}". قد تكون مساحة التخزين ممتلئة.`
+      );
+      
+      return false;
+    }
+  }
+  
+  /**
+   * حذف مشروع من خلال معرفه
+   * @param {string} projectId - معرف المشروع
+   * @returns {boolean} هل تمت العملية؟
+   */
+  function deleteProjectById(projectId) {
+    if (!projectId) {
+      dependencies.errorLogger.warn({
+        message: dependencies.localizationService.translate('warning.project.id.required') || 'معرف المشروع غير موجود.',
+        origin: 'ProjectActions.deleteProjectById'
+      });
+      return false;
+    }
+    
+    try {
+      // قراءة البيانات من التخزين
+      let savedProjects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
+      const projectIndex = savedProjects.findIndex(p => p.id === projectId);
+      
+      if (projectIndex === -1) {
+        dependencies.errorLogger.warn({
+          message: dependencies.localizationService.translate('warning.project.not.found', { id: projectId }) || 
+                   `المشروع غير موجود: ${projectId}`,
+          origin: 'ProjectActions.deleteProjectById'
+        });
+        return false;
+      }
+      
+      // إظهار نافذة التأكيد
+      const projectToDelete = savedProjects[projectIndex];
+      const confirmed = dependencies.modalFactoryAPI.showConfirm({
+        title: dependencies.localizationService.translate('project.delete.confirm.title') || 'تأكيد الحذف',
+        message: dependencies.localizationService.translate('project.delete.confirm.message', {
+          projectName: projectToDelete?.title || projectId
+        }) || `هل أنت متأكد من حذف مشروع "${projectToDelete?.title || projectId}"؟ هذا الإجراء لا يمكن التراجع عنه.`,
+        confirmText: dependencies.localizationService.translate('button.delete') || 'حذف',
+        cancelText: dependencies.localizationService.translate('button.cancel') || 'إلغاء',
+        type: 'danger'
+      });
+      
+      if (confirmed) {
+        // إزالة المشروع من القائمة
+        savedProjects.splice(projectIndex, 1);
+        const success = dependencies.localStorageAdapter.setItem(LS_KEY_SAVED_PROJECTS, savedProjects);
+        
+        if (success) {
+          dependencies.stateStore.dispatch(ACTIONS.UPDATE_SAVED_PROJECTS_LIST, savedProjects);
+          
+          // إذا كان المشروع المحذوف هو المشروع الحالي، قم بتفريغه
+          const currentState = dependencies.stateStore.getState();
+          if (currentState.currentProject?.id === projectId) {
+            dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, null);
+          }
+          
+          dependencies.eventAggregator.publish(EVENTS.PROJECT_DELETED, { projectId });
+          dependencies.notificationServiceAPI?.showSuccess(
+            dependencies.localizationService.translate('project.deleted.success', { id: projectId }) || 
+            `تم حذف المشروع ${projectId} بنجاح.`
+          );
+          return true;
+        } else {
+          throw new Error('فشل في تحديث التخزين المحلي بعد الحذف.');
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.delete', { id: projectId }) || 
+                 `فشل في حذف المشروع ${projectId}`,
+        origin: 'ProjectActions.deleteProjectById'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.delete.failed', { id: projectId }) || 
+        `فشل في حذف المشروع ${projectId}`
+      );
+      
+      return false;
+    }
+  }
+  
+  /**
+   * تحميل كل المشاريع المحفوظة من التخزين
+   */
+  function loadAllSavedProjectsFromStorage() {
+    try {
+      const projects = dependencies.localStorageAdapter.getItem(LS_KEY_SAVED_PROJECTS, []);
+      
+      // تحديث كل المشاريع بإضافة الحقول الافتراضية
+      const defaultStructure = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
+      const hydratedProjects = projects.map(p => ({
         ...defaultStructure,
         ...p,
-        quranSelection: { ...defaultStructure.quranSelection, ...(p.quranSelection || {}) },
-        background: { ...defaultStructure.background, ...(p.background || {}) },
-        textStyle: { ...defaultStructure.textStyle, ...(p.textStyle || {}) },
-        videoComposition: { ...defaultStructure.videoComposition, ...(p.videoComposition || {}) },
-        exportSettings: { ...defaultStructure.exportSettings, ...(p.exportSettings || {}) },
-    })).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)); // Sort by newest
-
-    dependencies.stateStore.dispatch(ACTIONS.UPDATE_SAVED_PROJECTS_LIST, hydratedProjects);
-    // console.debug('[ProjectActions] Loaded saved projects into state:', hydratedProjects.length);
-}
-
-
-function _setDependencies(injectedDeps) {
-  Object.assign(dependencies, injectedDeps);
-}
-
-// Public API for project actions
-const projectActionsAPI = {
-  _setDependencies,
-  createNewProjectObject, // Exposed if other modules need to create objects without loading
-  loadNewProject,         // Action: Creates a new project and loads it into the editor
-  loadExistingProjectById,// Action: Loads an existing project by ID
-  saveCurrentProject,     // Action: Saves the project currently in editor
-  deleteProjectById,      // Action: Deletes a project by ID
-  loadAllSavedProjectsFromStorage, // Called at startup
-};
-
+        quranSelection: { 
+          ...defaultStructure.quranSelection, 
+          ...(p.quranSelection || {}) 
+        },
+        background: { 
+          ...defaultStructure.background, 
+          ...(p.background || {}) 
+        },
+        textStyle: { 
+          ...defaultStructure.textStyle, 
+          ...(p.textStyle || {}) 
+        },
+        videoComposition: { 
+          ...defaultStructure.videoComposition, 
+          ...(p.videoComposition || {}) 
+        },
+        exportSettings: { 
+          ...defaultStructure.exportSettings, 
+          ...(p.exportSettings || {}) 
+        }
+      })).sort((a, b) => {
+        return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+      });
+      
+      // تحديث الحالة
+      dependencies.stateStore.dispatch(ACTIONS.UPDATE_SAVED_PROJECTS_LIST, hydratedProjects);
+      
+      // إرسال إشعار بتحميل المشاريع
+      dependencies.eventAggregator.publish(EVENTS.PROJECTS_LOADED, {
+        count: hydratedProjects.length,
+        timestamp: Date.now()
+      });
+      
+      return hydratedProjects;
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.projects.load') || 'فشل في تحميل المشاريع من التخزين.',
+        origin: 'ProjectActions.loadAllSavedProjectsFromStorage'
+      });
+      
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.load.failed') || 'فشل في تحميل المشاريع.'
+      );
+      
+      return [];
+    }
+  }
+  
+  /**
+   * دمج المشروع مع الإعدادات الافتراضية
+   * @param {Object} project - المشروع المراد دمجه
+   * @returns {Object} المشروع بعد الدمج
+   */
+  function _deepHydrateProject(project) {
+    const defaultStructure = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
+    
+    return {
+      ...defaultStructure,
+      ...project,
+      quranSelection: { 
+        ...defaultStructure.quranSelection, 
+        ...(project.quranSelection || {}) 
+      },
+      background: { 
+        ...defaultStructure.background, 
+        ...(project.background || {}) 
+      },
+      textStyle: { 
+        ...defaultStructure.textStyle, 
+        ...(project.textStyle || {}) 
+      },
+      videoComposition: { 
+        ...defaultStructure.videoComposition, 
+        ...(project.videoComposition || {}) 
+      },
+      exportSettings: { 
+        ...defaultStructure.exportSettings, 
+        ...(project.exportSettings || {}) 
+      }
+    };
+  }
+  
+  /**
+   * دمج الحالة الحالية مع الحالة الجديدة
+   * @param {Object} currentState - الحالة الحالية
+   * @param {Object} newState - الحالة الجديدة
+   * @returns {Object} الحالة المدمجة
+   */
+  function _mergeProjectState(currentState, newState) {
+    return {
+      ...currentState,
+      ...newState
+    };
+  }
+  
+  /**
+   * تحديد الاعتمادات
+   * @param {Object} injectedDeps - الاعتمادات
+   */
+  function _setDependencies(injectedDeps) {
+    Object.keys(injectedDeps).forEach(key => {
+      if (injectedDeps[key]) {
+        dependencies[key] = injectedDeps[key];
+      }
+    });
+  }
+  
+  return {
+    _setDependencies,
+    createNewProjectObject,
+    loadNewProject,
+    loadExistingProjectById,
+    saveCurrentProject,
+    deleteProjectById,
+    loadAllSavedProjectsFromStorage
+  };
+})();
 
 /**
- * Initialization function for ProjectActions.
- * @param {object} deps
- * @param {import('../../core/state-store.js').default} deps.stateStore
- * @param {import('../../services/local-storage.adapter.js').default} deps.localStorageAdapter
- * @param {import('../../core/error-logger.js').default} deps.errorLogger
- * @param {import('../../shared-ui-components/notification.presenter.js').ReturnType<initializeNotificationPresenter>} deps.notificationServiceAPI
- * @param {import('../../core/event-aggregator.js').default} deps.eventAggregator
- * // @param {ReturnType<import('../../shared-ui-components/modal.factory.js').initializeModalFactory>} [deps.modalFactoryAPI]
+ * وظيفة التهيئة
+ * @param {Object} deps - الاعتمادات
+ * @returns {Object} واجهة عامة للوحدة
  */
 export function initializeProjectActions(deps) {
-  projectActionsAPI._setDependencies(deps); // Pass dependencies
-
-  // Listen for generic save requests from other parts of the app (e.g., Ctrl+S shortcut)
-  deps.eventAggregator.subscribe(EVENTS.REQUEST_PROJECT_SAVE, () => {
-    projectActionsAPI.saveCurrentProject();
-  });
-
-  // Listen for navigation event requesting new project (e.g., from main screen button or shortcut)
-  deps.eventAggregator.subscribe(EVENTS.NAVIGATE_TO_EDITOR_NEW_PROJECT, () => {
-      projectActionsAPI.loadNewProject();
+  projectActions._setDependencies(deps);
+  
+  const {
+    stateStore,
+    localStorageAdapter,
+    errorLogger,
+    notificationServiceAPI,
+    eventAggregator
+  } = deps;
+  
+  // تعيين مراجع العناصر
+  projectActions.projectTitleInputRef = DOMElements.projectTitleInput || DOMElements.getProjectTitleInput;
+  projectActions.projectListContainerRef = DOMElements.projectsListContainer;
+  projectActions.projectCardRefs = DOMElements.projectCards;
+  
+  // تحميل المشاريع المحفوظة
+  const loadedProjects = projectActions.loadAllSavedProjectsFromStorage();
+  
+  // إعداد مستمعي الأحداث
+  eventAggregator.subscribe(EVENTS.REQUEST_PROJECT_SAVE, () => {
+    projectActions.saveCurrentProject();
   });
   
-  // On app init, load projects from storage.
-  // This should happen after this module is initialized.
-  // A dedicated APP_INITIALIZED event might be better for triggering this.
-  // Or moduleBootstrap can call it directly after all core inits.
-  projectActionsAPI.loadAllSavedProjectsFromStorage();
-
-  // console.info('[ProjectActions] Initialized.');
-  return { // Return the public API for other modules
-    loadNewProject: projectActionsAPI.loadNewProject,
-    loadExistingProjectById: projectActionsAPI.loadExistingProjectById,
-    saveCurrentProject: projectActionsAPI.saveCurrentProject,
-    deleteProjectById: projectActionsAPI.deleteProjectById,
-    // Expose createNewProjectObject if modules might need to get a default project structure
-    // createNewProjectObject: projectActionsAPI.createNewProjectObject 
+  eventAggregator.subscribe(EVENTS.NAVIGATE_TO_EDITOR_NEW_PROJECT, () => {
+    projectActions.loadNewProject();
+  });
+  
+  eventAggregator.subscribe(EVENTS.PROJECT_LOADED, (project) => {
+    currentProjectState = {
+      id: project.id,
+      title: project.title,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt
+    };
+  });
+  
+  eventAggregator.subscribe(EVENTS.PROJECT_DELETED, ({ projectId }) => {
+    if (currentProjectState.id === projectId) {
+      currentProjectState = { id: null, title: null, createdAt: null, updatedAt: null };
+    }
+  });
+  
+  // إرجاع الواجهة العامة
+  return {
+    loadNewProject: projectActions.loadNewProject,
+    loadExistingProjectById: (projectId) => projectActions.loadExistingProjectById(projectId),
+    saveCurrentProject: projectActions.saveCurrentProject,
+    deleteProjectById: (projectId) => projectActions.deleteProjectById(projectId),
+    loadAllSavedProjectsFromStorage: projectActions.loadAllSavedProjectsFromStorage
   };
 }
-
-export default projectActionsAPI; // Also export the object directly for potential import by name
