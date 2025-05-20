@@ -53,32 +53,26 @@ function _transformReplacementCase(matchedText, replacement) {
     const firstCharMatched = matchedText[0];
     const firstCharReplacement = replacement[0];
 
+    // If the entire matched text was uppercase, uppercase the entire replacement.
     if (matchedText === matchedText.toUpperCase()) {
         return replacement.toUpperCase();
     }
+    // If the entire matched text was lowercase, lowercase the entire replacement.
     if (matchedText === matchedText.toLowerCase()) {
         return replacement.toLowerCase();
     }
+    // If the first character of matched text was uppercase (likely title case or start of sentence)
     if (firstCharMatched === firstCharMatched.toUpperCase()) {
+        // If the rest of matchedText is lowercase (e.g., "Word"), apply title case to replacement.
         if (matchedText.length === 1 || matchedText.substring(1) === matchedText.substring(1).toLowerCase()) {
             return firstCharReplacement.toUpperCase() + replacement.substring(1).toLowerCase();
         }
+        // If mixed case after first char (e.g., "WordMixed"), just uppercase first char of replacement.
         return firstCharReplacement.toUpperCase() + replacement.substring(1);
     }
+    // Default: return replacement as is.
     return replacement;
 }
-
-/**
- * Regular expression for matching parts of a string for case conversion (snake_case, kebab-case, PascalCase, camelCase).
- * Matches:
- * - Sequences of 2+ uppercase letters followed by an uppercase letter and lowercase letter/number (e.g., "HTTP" in "HTTPRequest").
- * - An optional uppercase letter followed by lowercase letters and numbers (e.g., "Request", "request", "word1").
- * - Single uppercase letters (e.g., "A").
- * - Sequences of numbers (e.g., "123").
- * @private
- */
-const _CASE_CONVERSION_REGEX = /[A-Z]{2,}(?=[A-Z][a-z]+[0-9]*|\b)|[A-Z]?[a-z]+[0-9]*|[A-Z]|[0-9]+/g;
-
 
 /**
  * Capitalizes the first letter of a string.
@@ -114,6 +108,7 @@ export function capitalizeWords(str, lowercaseRest = false) {
   if (str.length === 0) {
     return str;
   }
+  // Regex captures the main part of the word and any non-space characters attached to it.
   return str.replace(/\b([^\W_]+)([^\s]*)/g, (match, wordStart, wordEnd) => {
     let capitalizedWordStart = wordStart.charAt(0).toUpperCase() +
                               (lowercaseRest ? wordStart.slice(1).toLowerCase() : wordStart.slice(1));
@@ -155,11 +150,16 @@ export function truncateString(str, maxLength, suffix = '...', preserveWord = fa
   let truncatedStr = str.substring(0, effectiveLength);
 
   if (preserveWord) {
-    if (str.length > effectiveLength && effectiveLength > 0 && str[effectiveLength] !== ' ' && truncatedStr[truncatedStr.length -1] !== ' ') {
+    // Check if we are cutting in the middle of a word in the original string
+    if (str.length > effectiveLength && // Original string was longer
+        effectiveLength > 0 && // We have some truncated string
+        str[effectiveLength] !== ' ' && // The character after cut isn't a space
+        truncatedStr[truncatedStr.length - 1] !== ' ') { // The character at cut isn't a space
         const lastSpaceIndex = truncatedStr.lastIndexOf(' ');
-        if (lastSpaceIndex !== -1) {
+        if (lastSpaceIndex !== -1) { // If -1, means no space in truncatedStr
             truncatedStr = truncatedStr.substring(0, lastSpaceIndex);
         } else {
+            // No space found in the part to be kept (e.g., "VeryLongWord")
             return suffix.substring(0, Math.min(suffix.length, maxLength));
         }
     }
@@ -195,25 +195,31 @@ export function stripHtmlTags(htmlString, allowedTags = []) {
       return node.textContent;
     }
     if (node.nodeType === Node.ELEMENT_NODE) {
-      const tagNameOriginal = node.tagName;
+      const tagNameOriginal = node.tagName; // Keep original case for tag
       const tagNameLower = tagNameOriginal.toLowerCase();
 
       if (allowedSet.has(tagNameLower)) {
-        let selfHtml = `<${tagNameOriginal}`;
+        let selfHtml = `<${tagNameOriginal}`; // Use original tag name
         for (const attr of node.attributes) {
           selfHtml += ` ${attr.name}="${_escapeHtmlForAttributes(attr.value)}"`;
         }
+
         if (voidElements.has(tagNameLower) && node.childNodes.length === 0) {
+          // Browsers might not strictly require the slash for HTML5 void elements,
+          // but it's common for XML-based serialization.
           selfHtml += ' />';
         } else {
           selfHtml += '>';
+          let inner = '';
           node.childNodes.forEach(child => {
-            selfHtml += serializeNode(child);
+            inner += serializeNode(child);
           });
-          selfHtml += `</${tagNameOriginal}>`;
+          selfHtml += inner;
+          selfHtml += `</${tagNameOriginal}>`; // Use original tag name
         }
         return selfHtml;
       } else {
+        // Tag is not allowed, process its children
         let content = '';
         node.childNodes.forEach(child => {
           content += serializeNode(child);
@@ -221,10 +227,11 @@ export function stripHtmlTags(htmlString, allowedTags = []) {
         return content;
       }
     }
-    return '';
+    return ''; // Ignore other node types like comments
   }
 
   let result = '';
+  // Iterate over childNodes of doc.body, not doc.documentElement or doc itself
   doc.body.childNodes.forEach(child => {
     result += serializeNode(child);
   });
@@ -241,7 +248,8 @@ export function escapeHtml(unsafeStr) {
   if (typeof unsafeStr !== 'string' && typeof unsafeStr !== 'number') {
     throw new Error('escapeHtml requires a string or number as input');
   }
-  const str = String(unsafeStr);
+  const str = String(unsafeStr); // Convert number to string
+
   const textNode = document.createTextNode(str);
   const div = document.createElement('div');
   div.appendChild(textNode);
@@ -258,6 +266,7 @@ export function unescapeHtml(escapedStr) {
   if (typeof escapedStr !== 'string') {
     throw new Error('unescapeHtml requires a string as input');
   }
+
   const div = document.createElement('div');
   div.innerHTML = escapedStr;
   return div.textContent || '';
@@ -277,7 +286,7 @@ export function isEmptyOrWhitespace(str) {
 }
 
 /**
- * Alias for isEmptyOrWhitespace. Checks if a string contains only whitespace characters or is empty.
+ * Alias for isEmptyOrWhitespace. Checks if a string contains only whitespace characters.
  * @param {string} str - The string to check.
  * @returns {boolean} True if the string contains only whitespace characters or is empty.
  * @throws {Error} If input is not a string
@@ -287,7 +296,8 @@ export function isWhitespaceOnly(str) {
 }
 
 /**
- * Counts the number of words in a string. Words are considered sequences of alphanumeric characters.
+ * Counts the number of words in a string.
+ * Words are considered sequences of alphanumeric characters.
  * @param {string} str - The string to count words in.
  * @returns {number} The number of words.
  * @throws {Error} If input is not a string.
@@ -333,34 +343,63 @@ export function slugify(str, separator = '-') {
     throw new Error('slugify requires a string as input for separator');
   }
 
-  let s = str.toString().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  let s = str.toString()
+    .normalize('NFKD') // Normalize to decomposed form for accent removal
+    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+    .toLowerCase()
+    .trim();
+
   const escapedSeparator = _escapeRegExp(separator);
 
-  s = s.replace(/\s+/g, separator);
+  s = s.replace(/\s+/g, separator); // Replace spaces with separator
   if (separator.length > 0) {
-    s = s.replace(new RegExp(`[^\\w${escapedSeparator}]`, 'g'), '');
-    s = s.replace(new RegExp(`${escapedSeparator}+`, 'g'), separator);
-    s = s.replace(new RegExp(`^${escapedSeparator}+|${escapedSeparator}+$`, 'g'), '');
-  } else {
+    s = s.replace(new RegExp(`[^\\w${escapedSeparator}]`, 'g'), ''); // Remove non-word chars except separator
+    s = s.replace(new RegExp(`${escapedSeparator}+`, 'g'), separator); // Replace multiple separators with one
+    s = s.replace(new RegExp(`^${escapedSeparator}+|${escapedSeparator}+$`, 'g'), '');// Trim leading/trailing separator
+  } else { // If separator is empty string, remove all non-alphanumeric characters
     s = s.replace(/[^\w]/g, '');
   }
+
   return s;
 }
 
-/** Trims whitespace from both ends of a string. */
+/**
+ * Trims whitespace from both ends of a string.
+ * @param {string} str - The string to trim.
+ * @returns {string} The trimmed string.
+ * @throws {Error} If input is not a string.
+ */
 export function trim(str) {
-  if (typeof str !== 'string') throw new Error('trim requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('trim requires a string as input');
+  }
   return str.trim();
 }
-/** Trims whitespace from the beginning (start) of a string. */
+
+/**
+ * Trims whitespace from the beginning (start) of a string.
+ * @param {string} str - The string to trim.
+ * @returns {string} The trimmed string.
+ * @throws {Error} If input is not a string.
+ */
 export function trimStart(str) {
-  if (typeof str !== 'string') throw new Error('trimStart requires a string as input');
-  return str.trimStart();
+  if (typeof str !== 'string') {
+    throw new Error('trimStart requires a string as input');
+  }
+  return str.trimStart(); // ES2019
 }
-/** Trims whitespace from the end of a string. */
+
+/**
+ * Trims whitespace from the end of a string.
+ * @param {string} str - The string to trim.
+ * @returns {string} The trimmed string.
+ * @throws {Error} If input is not a string.
+ */
 export function trimEnd(str) {
-  if (typeof str !== 'string') throw new Error('trimEnd requires a string as input');
-  return str.trimEnd();
+  if (typeof str !== 'string') {
+    throw new Error('trimEnd requires a string as input');
+  }
+  return str.trimEnd(); // ES2019
 }
 
 /**
@@ -382,15 +421,21 @@ export function truncateWords(str, maxWords, suffix = '...') {
     throw new Error('truncateWords requires suffix to be a string');
   }
 
-  if (maxWords === 0) return suffix;
+  if (maxWords === 0) {
+    return suffix;
+  }
+  // Filter out empty strings that can result from multiple spaces
   const words = str.split(/\s+/).filter(word => word.length > 0);
-  if (words.length <= maxWords) return str;
+  if (words.length <= maxWords) {
+    return str;
+  }
   return words.slice(0, maxWords).join(' ') + suffix;
 }
 
 /**
  * Truncates an HTML string to a maximum number of words, preserving HTML tags.
  * Note: This function uses regex for tokenization and is best for simple, well-formed HTML.
+ * Complex or malformed HTML might lead to unexpected results.
  * @param {string} htmlString - The input string with HTML.
  * @param {number} maxWords - The maximum number of words (from text content). Must be a non-negative integer.
  * @param {string} [suffix='...'] - The suffix to append if truncated.
@@ -408,68 +453,67 @@ export function truncateHtmlWords(htmlString, maxWords, suffix = '...') {
     throw new Error('truncateHtmlWords requires suffix to be a string');
   }
 
-  if (maxWords === 0) return suffix || '';
+  if (maxWords === 0) {
+    return suffix || ''; // Return suffix even if empty, or just empty string
+  }
 
+  // Use DOM to accurately count text words first
   const tempDiv = document.createElement('div');
   tempDiv.innerHTML = htmlString;
   const textContent = tempDiv.textContent || tempDiv.innerText || "";
   const totalTextWords = textContent.trim().split(/\s+/).filter(w => w.length > 0).length;
 
-  if (totalTextWords <= maxWords) return htmlString;
+  if (totalTextWords <= maxWords) {
+    return htmlString;
+  }
 
   let currentWordCount = 0;
   let truncatedResult = '';
   const openTagsStack = [];
+  // Regex to tokenize HTML: matches comments, tags, or text content
   const htmlTokens = htmlString.match(/<!--[\s\S]*?-->|<[^>]+>|[^<]+/g) || [];
   const voidElements = new Set(['area', 'base', 'br', 'col', 'command', 'embed', 'hr', 'img', 'input', 'keygen', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 
   for (const token of htmlTokens) {
-    if (currentWordCount >= maxWords && !token.startsWith('</')) { // Optimization: if words exceeded, only process closing tags or append suffix
-        if (!truncatedResult.endsWith(suffix)) {
-             truncatedResult = truncatedResult.trimEnd() + suffix;
-        }
-        // If the token is not a closing tag, we might be done if stack is empty or only need to close tags
-         if (token.startsWith('<') && !token.startsWith('</')) continue; // Skip opening tags if words exceeded
-    }
-
-    if (token.startsWith('<!--')) {
+    if (token.startsWith('<!--')) { // It's a comment
       truncatedResult += token;
-    } else if (token.startsWith('<') && token.endsWith('>')) {
+    } else if (token.startsWith('<') && token.endsWith('>')) { // It's a tag
       truncatedResult += token;
-      const tagNameMatch = token.match(/^<\/?([a-zA-Z0-9]+)/);
+      const tagNameMatch = token.match(/^<\/?([a-zA-Z0-9]+)/); // Get tag name
       if (tagNameMatch) {
         const tagName = tagNameMatch[1].toLowerCase();
-        if (token.startsWith('</')) {
+        if (token.startsWith('</')) { // Closing tag
           if (openTagsStack.length > 0 && openTagsStack[openTagsStack.length - 1] === tagName) {
             openTagsStack.pop();
           }
-        } else if (!token.endsWith('/>') && !voidElements.has(tagName)) {
+        } else if (!token.endsWith('/>') && !voidElements.has(tagName)) { // Opening tag (not self-closing and not void)
           openTagsStack.push(tagName);
         }
       }
-    } else { // Text content
-      if (currentWordCount < maxWords) {
-          const textNodeParts = token.split(/(\s+)/);
-          for (const part of textNodeParts) {
-            if (currentWordCount >= maxWords) break;
-            if (part.trim().length > 0) {
-              truncatedResult += part;
-              currentWordCount++;
-            } else {
-              truncatedResult += part;
-            }
-          }
-          if (currentWordCount >= maxWords && !truncatedResult.endsWith(suffix)) {
-            truncatedResult = truncatedResult.trimEnd() + suffix;
-          }
+    } else { // It's text content
+      const textNodeParts = token.split(/(\s+)/); // Split by spaces to count words
+      for (const part of textNodeParts) {
+        if (currentWordCount >= maxWords) break;
+        if (part.trim().length > 0) { // It's a word
+          truncatedResult += part;
+          currentWordCount++;
+        } else { // It's whitespace
+          truncatedResult += part;
+        }
+      }
+      if (currentWordCount >= maxWords) {
+        truncatedResult = truncatedResult.trimEnd(); // Remove trailing space before suffix
+        truncatedResult += suffix;
+        break; // Max words reached
       }
     }
+     if (currentWordCount >= maxWords && !truncatedResult.endsWith(suffix)) {
+        truncatedResult = truncatedResult.trimEnd();
+        truncatedResult += suffix;
+     }
   }
   
-  if (currentWordCount >= maxWords && !truncatedResult.endsWith(suffix)) {
-     truncatedResult = truncatedResult.trimEnd() + suffix;
-  }
-
+  // Close any remaining open tags
   while (openTagsStack.length > 0) {
     truncatedResult += `</${openTagsStack.pop()}>`;
   }
@@ -477,10 +521,11 @@ export function truncateHtmlWords(htmlString, maxWords, suffix = '...') {
   return truncatedResult;
 }
 
+
 /**
  * Repeats a string a specified number of times.
  * @param {string} str - The string to repeat.
- * @param {number} count - The number of times to repeat. Must be a non-negative integer.
+ * @param {number} count - The number of times to repeat the string. Must be a non-negative integer.
  * @returns {string} The repeated string.
  * @throws {Error} If inputs are invalid.
  */
@@ -491,8 +536,35 @@ export function repeatString(str, count) {
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
     throw new Error('repeatString requires count to be a non-negative integer');
   }
-  if (count === 0 || str.length === 0) return '';
+  if (count === 0 || str.length === 0) {
+    return '';
+  }
   return str.repeat(count);
+}
+
+/**
+ * Replaces all instances of a literal substring with another string.
+ * For RegExp-based replacement, use `replaceAllWithPattern`.
+ * @param {string} str - The input string.
+ * @param {string} search - The literal substring to replace.
+ * @param {string} replacement - The replacement string.
+ * @returns {string} The modified string.
+ * @throws {Error} If inputs are not strings.
+ */
+export function replaceAll(str, search, replacement) {
+  if (typeof str !== 'string' || typeof search !== 'string' || typeof replacement !== 'string') {
+    throw new Error('replaceAll requires all arguments to be strings');
+  }
+  if (search === '') { // Edge case: empty search string
+    // Mimic behavior of String.prototype.replaceAll for empty search if desired,
+    // or return str to avoid infinite loops or unexpected behavior.
+    // Current String.prototype.replaceAll behavior for empty string:
+    // "abc".replaceAll("", "-") -> "-a-b-c-"
+    // For simplicity and common expectation, we can return str or implement the more complex behavior.
+    // Let's stick to split/join which handles empty search by not changing the string if search is empty.
+    return str;
+  }
+  return str.split(search).join(replacement);
 }
 
 /**
@@ -500,7 +572,7 @@ export function repeatString(str, count) {
  * @param {string} str - The string to check.
  * @param {string} searchString - The substring to search for.
  * @param {number} [position=0] - The position in the string at which to begin searching.
- * @returns {boolean} True if the string starts with the substring.
+ * @returns {boolean} True if the string starts with the substring, false otherwise.
  * @throws {Error} If inputs are invalid.
  */
 export function startsWith(str, searchString, position = 0) {
@@ -517,14 +589,16 @@ export function startsWith(str, searchString, position = 0) {
  * Checks if a string ends with the specified substring.
  * @param {string} str - The string to check.
  * @param {string} searchString - The substring to search for.
- * @param {number} [length=str.length] - The portion of the string to consider.
- * @returns {boolean} True if the string ends with the substring.
+ * @param {number} [length=str.length] - The portion of the string to consider (effectively str.slice(0, length).endsWith(searchString)). Defaults to string's full length.
+ * @returns {boolean} True if the string ends with the substring, false otherwise.
  * @throws {Error} If inputs are invalid.
  */
 export function endsWith(str, searchString, length) {
   if (typeof str !== 'string' || typeof searchString !== 'string') {
     throw new Error('endsWith requires string arguments for str and searchString');
   }
+  // 'length' parameter in String.prototype.endsWith is optional and defaults to str.length.
+  // It specifies the portion of the string to be considered for the match.
   if (length !== undefined && (typeof length !== 'number' || length < 0)) {
       throw new Error('endsWith requires length to be a non-negative number if provided');
   }
@@ -535,8 +609,8 @@ export function endsWith(str, searchString, length) {
  * Pads a string with another string until it reaches the target length.
  * @param {string} str - The string to pad.
  * @param {number} targetLength - The desired length of the output string.
- * @param {string} [padString=' '] - The string to pad with.
- * @param {number} [padPosition=0] - 0 for left (padStart), 1 for right (padEnd).
+ * @param {string} [padString=' '] - The string to pad with. If empty, original string is returned if targetLength is not met.
+ * @param {number} [padPosition=0] - The position to apply padding: 0 for left (padStart), 1 for right (padEnd).
  * @returns {string} The padded string.
  * @throws {Error} If inputs are invalid.
  */
@@ -553,43 +627,97 @@ export function padString(str, targetLength, padString = ' ', padPosition = 0) {
   if (typeof padPosition !== 'number' || !Number.isInteger(padPosition) || (padPosition !== 0 && padPosition !== 1)) {
     throw new Error('padString requires padPosition to be 0 (left) or 1 (right)');
   }
-  if (str.length >= targetLength || padString.length === 0) return str;
-  return padPosition === 0 ? str.padStart(targetLength, padString) : str.padEnd(targetLength, padString);
+
+  if (str.length >= targetLength || padString.length === 0) {
+    return str;
+  }
+
+  if (padPosition === 0) { // Left padding
+    return str.padStart(targetLength, padString); // ES2017
+  } else { // Right padding
+    return str.padEnd(targetLength, padString); // ES2017
+  }
 }
 
-/** Converts a string to title case. */
+const KEBAB_PASCAL_CAMEL_REGEX = /[A-Z]{2,}(?=[A-Z][a-z]+[0-9]*|\b)|[A-Z]?[a-z]+[0-9]*|[A-Z]|[0-9]+/g;
+
+/**
+ * Converts a string to title case (e.g., "hello world" -> "Hello World").
+ * Each word's first letter is capitalized, and the rest of the word is lowercased.
+ * @param {string} str - The string to convert.
+ * @returns {string} The title-cased string.
+ * @throws {Error} If input is not a string.
+ */
 export function toTitleCase(str) {
-  if (typeof str !== 'string') throw new Error('toTitleCase requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('toTitleCase requires a string as input');
+  }
   if (str.length === 0) return '';
+  // Regex targets words, \w includes _, which might not be desired for typical title case.
+  // Using a simpler regex that splits by common word boundary characters might be more robust for "title case".
+  // However, to be consistent with capitalizeWords, \b\w+ is fine if _ is part of a "word".
+  // For classic title case, let's refine to split and rejoin.
   return str.replace(/\b\w+/g, txt => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
 }
-/** Converts a string to snake_case. */
+
+/**
+ * Converts a string to snake_case.
+ * @param {string} str - The string to convert.
+ * @returns {string} The snake_case string.
+ * @throws {Error} If input is not a string.
+ */
 export function toSnakeCase(str) {
-  if (typeof str !== 'string') throw new Error('toSnakeCase requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('toSnakeCase requires a string as input');
+  }
   if (str.length === 0) return '';
-  const match = str.match(_CASE_CONVERSION_REGEX);
-  if (!match) return str.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  const match = str.match(KEBAB_PASCAL_CAMEL_REGEX);
+  if (!match) return str.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, ''); // Handle cases like "---" or " "
   return match.map(x => x.toLowerCase()).join('_');
 }
-/** Converts a string to kebab-case. */
+
+/**
+ * Converts a string to kebab-case.
+ * @param {string} str - The string to convert.
+ * @returns {string} The kebab-case string.
+ * @throws {Error} If input is not a string.
+ */
 export function toKebabCase(str) {
-  if (typeof str !== 'string') throw new Error('toKebabCase requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('toKebabCase requires a string as input');
+  }
   if (str.length === 0) return '';
-  const match = str.match(_CASE_CONVERSION_REGEX);
+  const match = str.match(KEBAB_PASCAL_CAMEL_REGEX);
   if (!match) return str.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
   return match.map(x => x.toLowerCase()).join('-');
 }
-/** Converts a string to PascalCase. */
+
+/**
+ * Converts a string to PascalCase (aka UpperCamelCase).
+ * @param {string} str - The string to convert.
+ * @returns {string} The PascalCase string.
+ * @throws {Error} If input is not a string.
+ */
 export function toPascalCase(str) {
-  if (typeof str !== 'string') throw new Error('toPascalCase requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('toPascalCase requires a string as input');
+  }
   if (str.length === 0) return '';
-  const match = str.match(_CASE_CONVERSION_REGEX);
-  if (!match) return str.replace(/[^a-zA-Z0-9]+/g, '').replace(/^(.)/, c => c.toUpperCase());
+  const match = str.match(KEBAB_PASCAL_CAMEL_REGEX);
+   if (!match) return str.replace(/[^a-zA-Z0-9]+/g, '').replace(/^(.)/, c => c.toUpperCase());
   return match.map(x => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()).join('');
 }
-/** Converts a string to camelCase. */
+
+/**
+ * Converts a string to camelCase.
+ * @param {string} str - The string to convert.
+ * @returns {string} The camelCase string.
+ * @throws {Error} If input is not a string.
+ */
 export function toCamelCase(str) {
-  if (typeof str !== 'string') throw new Error('toCamelCase requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('toCamelCase requires a string as input');
+  }
   if (str.length === 0) return '';
   const pascal = toPascalCase(str);
   if (pascal.length === 0) return '';
@@ -597,7 +725,9 @@ export function toCamelCase(str) {
 }
 
 /**
- * Truncates a string to a maximum character length, preserving word boundaries.
+ * Truncates a string to a maximum length, preserving word boundaries and adding a suffix.
+ * If the first word itself is longer than the allowed length (after suffix), only the suffix (or part of it) is returned.
+ * Trailing punctuation immediately before the suffix may be removed.
  * @param {string} str - The input string.
  * @param {number} maxLength - The maximum length of the output string (including suffix).
  * @param {string} [suffix='...'] - The suffix to add if the string is truncated.
@@ -614,23 +744,47 @@ export function smartTruncate(str, maxLength, suffix = '...') {
   if (typeof suffix !== 'string') {
     throw new Error('smartTruncate requires a string as suffix');
   }
-  if (str.length <= maxLength) return str;
+
+  if (str.length <= maxLength) {
+    return str;
+  }
+
   const limit = maxLength - suffix.length;
-  if (limit <= 0) return suffix.substring(0, Math.min(suffix.length, maxLength));
+
+  if (limit <= 0) { // Not enough space even for one char + suffix
+    return suffix.substring(0, Math.min(suffix.length, maxLength));
+  }
+
   let truncated = str.substring(0, limit);
-  if (str.length > limit && limit > 0 && str[limit] !== ' ' && truncated[truncated.length - 1] !== ' ') {
+
+  // Check if we are cutting in the middle of a word and need to backtrack
+  if (str.length > limit && // Original string was indeed longer
+      limit > 0 && // We have some content
+      str[limit] !== ' ' && // Character after cut is not a space
+      truncated[truncated.length - 1] !== ' ') { // Character at cut is not a space
     const lastSpace = truncated.lastIndexOf(' ');
-    if (lastSpace !== -1) {
+    if (lastSpace !== -1) { // Found a space to break at
       truncated = truncated.substring(0, lastSpace);
-    } else {
+    } else { // No space found in the truncated part (e.g., "LooooongWord")
+      // In this case, it's better to return only the suffix as no full word fits.
       return suffix.substring(0, Math.min(suffix.length, maxLength));
     }
   }
+
+  // Remove trailing punctuation and spaces before adding suffix
   truncated = truncated.replace(/[.,!?;:\s]+$/, "");
+
   return truncated + suffix;
 }
 
-/** Checks if a string contains another string. */
+/**
+ * Checks if a string contains another string.
+ * @param {string} str - The string to search in.
+ * @param {string} search - The string to search for.
+ * @param {number} [position=0] - The position to start searching.
+ * @returns {boolean} True if the string contains the search string.
+ * @throws {Error} If inputs are invalid.
+ */
 export function containsString(str, search, position = 0) {
   if (typeof str !== 'string' || typeof search !== 'string') {
     throw new Error('containsString requires string arguments for str and search');
@@ -638,15 +792,22 @@ export function containsString(str, search, position = 0) {
   if (typeof position !== 'number' || position < 0) {
     throw new Error('containsString requires position to be a non-negative number');
   }
-  return str.includes(search, position);
+  return str.includes(search, position); // ES6
 }
-/** Checks if a string contains another string, ignoring case. */
+
+/**
+ * Checks if a string contains another string, ignoring case.
+ * @param {string} str - The string to search in.
+ * @param {string} search - The string to search for.
+ * @returns {boolean} True if the string contains the search string (case-insensitive).
+ * @throws {Error} If inputs are invalid.
+ */
 export function containsStringIgnoreCase(str, search) {
   if (typeof str !== 'string' || typeof search !== 'string') {
     throw new Error('containsStringIgnoreCase requires string arguments');
   }
-  if (search.length === 0) return true;
-  if (str.length === 0) return false;
+  if (search.length === 0) return true; // Empty search string is in any string
+  if (str.length === 0) return false; // Non-empty search cannot be in empty string
   return str.toLowerCase().includes(search.toLowerCase());
 }
 
@@ -668,11 +829,18 @@ export function repeatStringWithSeparator(str, count, separator = '') {
   if (typeof separator !== 'string') {
     throw new Error('repeatStringWithSeparator requires a string as separator');
   }
-  if (count === 0) return '';
-  if (count === 1) return str;
-  if (str.length === 0) {
-    return separator.length > 0 ? new Array(count -1).fill(separator).join('') : '';
+
+  if (count === 0) {
+    return '';
   }
+  if (count === 1) {
+    return str;
+  }
+  if (str.length === 0) { // Repeating an empty string n times with a separator
+    if (separator.length > 0) return new Array(count - 1).fill(separator).join('');
+    return '';
+  }
+
   return new Array(count).fill(str).join(separator);
 }
 
@@ -722,17 +890,60 @@ export function alphanumericWithUnderscoresAndSpacesOnly(str) {
   return str.replace(/[^a-zA-Z0-9\s_]/g, '');
 }
 
-/** Normalizes spaces in a string (multiple spaces to one, trims ends). */
+/**
+ * Replaces multiple consecutive spaces with a single space and trims the string.
+ * @param {string} str - The string to process.
+ * @returns {string} The normalized string.
+ * @throws {Error} If input is not a string.
+ */
 export function normalizeString(str) {
-  if (typeof str !== 'string') throw new Error('normalizeString requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('normalizeString requires a string as input');
+  }
   return str.replace(/\s+/g, ' ').trim();
 }
-/** Normalizes line breaks in a string (multiple breaks to one LF). */
+
+/**
+ * Replaces multiple consecutive line breaks (CRLF, LF, CR) with a single LF line break.
+ * Does not trim other whitespace unless it forms part of multiple line breaks.
+ * @param {string} str - The string to process.
+ * @returns {string} The string with single line breaks.
+ * @throws {Error} If input is not a string.
+ */
 export function normalizeLineBreaks(str) {
-  if (typeof str !== 'string') throw new Error('normalizeLineBreaks requires a string as input');
+  if (typeof str !== 'string') {
+    throw new Error('normalizeLineBreaks requires a string as input');
+  }
   return str.replace(/(\r\n|\r|\n){2,}/g, '\n');
 }
-/** Checks if two strings are equal, ignoring case. */
+
+/**
+ * Replaces all occurrences of a search string (treated as a literal) with a replacement string using global regex.
+ * @param {string} str - The string to process.
+ * @param {string} patternString - The literal string pattern to replace.
+ * @param {string} replacement - The replacement substring.
+ * @returns {string} The modified string.
+ * @throws {Error} If inputs are invalid.
+ */
+export function replaceAllWithRegex(str, patternString, replacement) {
+  if (typeof str !== 'string' || typeof patternString !== 'string' || typeof replacement !== 'string') {
+    throw new Error('replaceAllWithRegex requires all arguments to be strings');
+  }
+  if (patternString === '') {
+    // Consistent with replaceAll, could make it insert like String.prototype.replaceAll
+    return str;
+  }
+  const regex = new RegExp(_escapeRegExp(patternString), 'g');
+  return str.replace(regex, replacement);
+}
+
+/**
+ * Checks if two strings are equal, ignoring case.
+ * @param {string} str1 - First string to compare.
+ * @param {string} str2 - Second string to compare.
+ * @returns {boolean} True if the strings are equal (case-insensitive).
+ * @throws {Error} If inputs are not strings.
+ */
 export function equalsIgnoreCase(str1, str2) {
   if (typeof str1 !== 'string' || typeof str2 !== 'string') {
     throw new Error('equalsIgnoreCase requires string arguments');
@@ -742,11 +953,12 @@ export function equalsIgnoreCase(str1, str2) {
 
 /**
  * Replaces all occurrences of a search string or regex pattern with a replacement string or the result of a replacer function.
- * If `pattern` is a string, it's treated as a literal string to be replaced globally (special regex characters are escaped).
- * If `pattern` is a RegExp, it's used as is (ensuring the global 'g' flag is set).
+ * This function mirrors the behavior of String.prototype.replace with a global flag for regex.
  * @param {string} str - The string to process.
- * @param {string|RegExp} pattern - The string or regular expression to search for.
+ * @param {string|RegExp} pattern - The string or regular expression to search for. If a string, it's treated literally.
  * @param {string|((substring: string, ...args: any[]) => string)} replacer - The replacement string or a function.
+ *        If `pattern` is a string, `replacer` function gets `(matchedSubstring, offset, originalString)`.
+ *        If `pattern` is a RegExp, `replacer` function gets `(match, p1, p2, ..., offset, originalString, namedGroups)`.
  * @returns {string} The modified string.
  * @throws {Error} If inputs are invalid.
  */
@@ -762,20 +974,13 @@ export function replaceAllWithPattern(str, pattern, replacer) {
   }
 
   if (typeof pattern === 'string') {
-    if (pattern === '') { // Mimic native String.prototype.replaceAll behavior for empty string search
-        if (typeof replacer === 'function') {
-            // This is complex to replicate perfectly without full context of replacer args.
-            // For simplicity, we'll use split/join which is common for literal replacement.
-            // If native String.prototype.replaceAll behavior is critical for empty strings with function,
-            // this part might need more advanced handling or a note about the difference.
-            return str.split(pattern).join(typeof replacer === 'string' ? replacer : replacer(pattern, 0, str)); // Simplified
-        }
-        return str.split(pattern).join(replacer);
-    }
+    if (pattern === '') return str; // Or implement String.prototype.replaceAll behavior for ""
+    // String.prototype.replaceAll is ES2021, this provides similar functionality for literal strings
     const escapedPattern = _escapeRegExp(pattern);
     const regex = new RegExp(escapedPattern, 'g');
     return str.replace(regex, replacer);
   } else { // pattern is RegExp
+    // Ensure the global flag is set for RegExp
     const globalRegex = pattern.global ? pattern : new RegExp(pattern.source, pattern.flags + 'g');
     return str.replace(globalRegex, replacer);
   }
@@ -787,7 +992,7 @@ export function replaceAllWithPattern(str, pattern, replacer) {
  * @param {string} str - The string to process.
  * @param {string} search - The literal substring to replace.
  * @param {(searchString: string, replacementIndex: number) => string} replacerFn - A function that returns the replacement string.
- * @param {number} [limit=Infinity] - Optional limit. Must be a non-negative number or Infinity.
+ * @param {number} [limit=Infinity] - Optional limit on the number of replacements. Must be a non-negative number or Infinity.
  * @returns {string} The modified string.
  * @throws {Error} If inputs are invalid.
  */
@@ -801,11 +1006,13 @@ export function replaceAllWithCallbackAndLimit(str, search, replacerFn, limit = 
   if (typeof replacerFn !== 'function') {
     throw new Error('replaceAllWithCallbackAndLimit requires replacerFn to be a function');
   }
-  if (typeof limit !== 'number' || limit < 0) {
+  if (typeof limit !== 'number' || limit < 0) { // Infinity is a number
     throw new Error('replaceAllWithCallbackAndLimit requires limit to be a non-negative number or Infinity');
   }
 
-  if (search === '' || limit === 0) return str;
+  if (search === '' || limit === 0) {
+    return str;
+  }
 
   const resultParts = [];
   let currentIndex = 0;
@@ -818,7 +1025,8 @@ export function replaceAllWithCallbackAndLimit(str, search, replacerFn, limit = 
     currentIndex = matchIndex + search.length;
     replacementsCount++;
   }
-  resultParts.push(str.substring(currentIndex));
+  resultParts.push(str.substring(currentIndex)); // Add the rest of the string
+
   return resultParts.join('');
 }
 
@@ -835,10 +1043,16 @@ export function replaceAllPreserveCase(str, search, replacement) {
   if (typeof str !== 'string' || typeof search !== 'string' || typeof replacement !== 'string') {
     throw new Error('replaceAllPreserveCase requires all arguments to be strings');
   }
-  if (search === '') return str;
+  if (search === '') { // If search is empty, no change
+    return str;
+  }
+
   const escapedSearch = _escapeRegExp(search);
-  const regex = new RegExp(escapedSearch, 'gi');
-  return str.replace(regex, (matchedText) => _transformReplacementCase(matchedText, replacement));
+  const regex = new RegExp(escapedSearch, 'gi'); // 'g' for global, 'i' for case-insensitive
+
+  return str.replace(regex, (matchedText) => {
+    return _transformReplacementCase(matchedText, replacement);
+  });
 }
 
 /**
@@ -846,7 +1060,7 @@ export function replaceAllPreserveCase(str, search, replacement) {
  * @param {string} str - The input string.
  * @param {string} search - The literal substring to replace.
  * @param {string} replacement - The replacement string.
- * @param {number} [limit=Infinity] - Max number of replacements. Must be non-negative or Infinity.
+ * @param {number} [limit=Infinity] - The maximum number of replacements. Must be a non-negative number or Infinity.
  * @returns {string} The modified string.
  * @throws {Error} If inputs are invalid.
  */
@@ -854,9 +1068,13 @@ export function replaceAllWithLimit(str, search, replacement, limit = Infinity) 
   if (typeof str !== 'string' || typeof search !== 'string' || typeof replacement !== 'string') {
     throw new Error('replaceAllWithLimit requires string arguments');
   }
-  if (typeof limit !== 'number' || limit < 0) {
+  if (typeof limit !== 'number' || limit < 0) { // Infinity is a number
     throw new Error('replaceAllWithLimit requires limit to be a non-negative number or Infinity');
   }
-  if (search === '' || limit === 0) return str;
+
+  if (search === '' || limit === 0) {
+    return str;
+  }
+  // Leverage replaceAllWithCallbackAndLimit
   return replaceAllWithCallbackAndLimit(str, search, () => replacement, limit);
 }
