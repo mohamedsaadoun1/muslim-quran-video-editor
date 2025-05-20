@@ -1,270 +1,616 @@
 // js/features/project-manager/project-list.renderer.js
-
 import DOMElements from '../../core/dom-elements.js';
-import { ACTIONS, EVENTS, DEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js';
-import { createElement, setDataAttribute } from '../../utils/dom.manipulator.js'; // Assuming this exists
-import timeFormatter from '../../utils/time.formatter.js'; // Assuming this exists
+import { 
+  ACTIONS, 
+  EVENTS, 
+  DEFAULT_PROJECT_SCHEMA,
+  APP_CONSTANTS
+} from '../../config/app.constants.js';
+import { 
+  createElement, 
+  setDataAttribute,
+  removeElement,
+  addClass,
+  removeClass
+} from '../../utils/dom.manipulator.js';
+import timeFormatter from '../../utils/time.formatter.js';
+import notificationPresenter from '../../shared-ui-components/notification.presenter.js';
+import modalFactory from '../../shared-ui-components/modal.factory.js';
 
+/**
+ * مُنشئ قائمة المشاريع
+ */
 const projectListRenderer = (() => {
+  // مراجع عناصر DOM
   let listContainer = null;
   let noProjectsMsgElement = null;
-
+  
+  // الاعتمادات
   let dependencies = {
-    stateStore: {
-        getState: () => ({ savedProjects: [], activeScreen: 'initial' }),
-        dispatch: () => {},
-        subscribe: () => (() => {})
+    stateStore: { 
+      getState: () => ({ 
+        savedProjects: [],
+        activeScreen: 'initial',
+        currentProject: null
+      }),
+      dispatch: () => {},
+      subscribe: () => (() => {})
     },
-    eventAggregator: { publish: () => {}, subscribe: () => ({ unsubscribe: () => {} }) },
+    eventAggregator: { 
+      publish: () => {}, 
+      subscribe: () => ({ unsubscribe: () => {} }) 
+    },
     errorLogger: console,
-    localizationService: { translate: (key, fallback) => fallback || key },
-    modalFactoryAPI: { showConfirm: async () => false } // From modal.factory.js
+    localizationService: { 
+      translate: (key, fallback) => fallback || key,
+      getCurrentLanguage: () => 'ar'
+    },
+    modalFactoryAPI: { 
+      showConfirm: async () => false 
+    }
   };
-
+  
   /**
-   * Creates a single project card HTML element.
-   * @private
-   * @param {import('../../core/state-store.js').ProjectState} project - The project data.
-   * @returns {HTMLElement | null} The created card element or null on error.
+   * إنشاء بطاقة مشروع
+   * @param {Object} project - بيانات المشروع
+   * @returns {HTMLElement} - بطاقة المشروع
    */
   function _createProjectCard(project) {
     if (!project || !project.id) {
-      (dependencies.errorLogger.logWarning || console.warn)('Cannot create project card: Invalid project data.', project);
+      dependencies.errorLogger.warn({
+        message: 'لا يمكن إنشاء بطاقة مشروع بدون بيانات صحيحة',
+        origin: 'ProjectListRenderer._createProjectCard',
+        context: { project }
+      });
       return null;
     }
-
-    const card = createElement('div', { classNames: 'project-card', attributes: { 'data-project-id': project.id, 'tabindex': '0', 'role': 'button' } });
-
-    const title = createElement('h3', { textContent: project.title || DEFAULT_PROJECT_SCHEMA.title });
-    card.appendChild(title);
-
-    const meta = createElement('div', { classNames: 'project-meta' });
-    const lastUpdated = project.updatedAt ?
-        new Date(project.updatedAt).toLocaleString(dependencies.localizationService.getCurrentLanguage() || 'ar-SA') : // Needs locale
-        (dependencies.localizationService.translate('projectCard.neverUpdated', 'لم يتم التحديث') || 'لم يتم التحديث');
     
-    const dateSpan = createElement('span', { textContent: `${dependencies.localizationService.translate('projectCard.lastUpdated', 'آخر تحديث') || 'آخر تحديث'}: ${lastUpdated}` });
-    meta.appendChild(dateSpan);
-    // You can add more meta info here, e.g., Surah range
-    // const surahInfo = project.quranSelection ? `السورة: ${project.quranSelection.surahId}, الآيات: ${project.quranSelection.startAyah}-${project.quranSelection.endAyah}` : '';
-    // meta.appendChild(createElement('span', {textContent: surahInfo}));
-    card.appendChild(meta);
-
-    const actionsWrapper = createElement('div', { classNames: 'project-actions' });
-
-    // Edit/Load Button (the card itself is clickable for this)
-    // card.addEventListener('click', () => _handleLoadProject(project.id)); is handled by delegation below
-
-    // Duplicate Button (Future)
-    // const duplicateBtn = createElement('button', { classNames: 'project-action-btn duplicate-project-btn', textContent: 'تكرار', attributes: {'title': 'تكرار المشروع'} });
-    // duplicateBtn.innerHTML = '<i class="fas fa-copy"></i> ' + (dependencies.localizationService.translate('button.duplicate', 'تكرار') || 'تكرار');
-    // actionsWrapper.appendChild(duplicateBtn);
-
-    // Delete Button
-    const deleteBtn = createElement('button', {
-        classNames: 'project-action-btn delete-project-btn',
-        attributes: { 'title': dependencies.localizationService.translate('button.delete.project', 'حذف المشروع') || 'حذف المشروع' }
-    });
-    deleteBtn.innerHTML = `<i class="fas fa-trash-alt"></i> ${dependencies.localizationService.translate('button.delete', 'حذف') || 'حذف'}`;
-    // Event listener for delete will be attached via delegation in initialize
-    actionsWrapper.appendChild(deleteBtn);
-
-    card.appendChild(actionsWrapper);
-    return card;
+    try {
+      // إنشاء العناصر الأساسية
+      const card = createElement('div', {
+        classNames: ['project-card'],
+        attributes: { 
+          'data-project-id': project.id,
+          'tabindex': '0',
+          'role': 'button',
+          'aria-label': dependencies.localizationService.translate('project.card.aria.label', {
+            title: project.title || 'مشروع جديد',
+            updated: project.updatedAt ? timeFormatter.format(project.updatedAt, 'datetime') : 'جديد'
+          }) || `مشروع ${project.title || 'بدون عنوان'} - تم التحديث: ${project.updatedAt ? new Date(project.updatedAt).toLocaleString() : 'جديد'}`,
+          'aria-role': 'button'
+        }
+      });
+      
+      // عنوان المشروع
+      const title = createElement('h3', {
+        textContent: project.title || DEFAULT_PROJECT_SCHEMA.title
+      });
+      
+      // معلومات إضافية عن المشروع
+      const meta = createElement('div', { classNames: ['project-meta'] });
+      
+      // آخر تحديث
+      const lastUpdated = project.updatedAt ? 
+        timeFormatter.format(project.updatedAt, 'datetime') : 
+        dependencies.localizationService.translate('project.never.updated') || 'لم يتم التحديث';
+        
+      const dateSpan = createElement('span', {
+        textContent: `${dependencies.localizationService.translate('project.last.updated') || 'آخر تحديث'}: ${lastUpdated}`
+      });
+      
+      // معلومات السورة والآيات
+      if (project.quranSelection && project.quranSelection.surahId) {
+        const surahInfo = createElement('span', {
+          textContent: `${dependencies.localizationService.translate('project.surah') || 'السورة'}: ${project.quranSelection.surahId}, ${dependencies.localizationService.translate('project.verses') || 'الآيات'}: ${project.quranSelection.startAyah}-${project.quranSelection.endAyah}`
+        });
+        meta.appendChild(surahInfo);
+      }
+      
+      // إضافة العناصر إلى البطاقة
+      card.appendChild(title);
+      meta.appendChild(dateSpan);
+      card.appendChild(meta);
+      
+      // عناصر الإجراءات
+      const actionsWrapper = createElement('div', { classNames: ['project-actions'] });
+      
+      // زر الحذف
+      const deleteBtn = createElement('button', {
+        classNames: ['project-action-btn', 'delete-project-btn'],
+        attributes: {
+          'title': dependencies.localizationService.translate('button.delete.project') || 'حذف المشروع'
+        }
+      });
+      
+      deleteBtn.innerHTML = `<i class="fas fa-trash-alt"></i> ${dependencies.localizationService.translate('button.delete') || 'حذف'}`;
+      actionsWrapper.appendChild(deleteBtn);
+      
+      // زر التكرار (في المستقبل)
+      if (APP_CONSTANTS.ENABLE_PROJECT_DUPLICATION) {
+        const duplicateBtn = createElement('button', {
+          classNames: ['project-action-btn', 'duplicate-project-btn'],
+          attributes: {
+            'title': dependencies.localizationService.translate('button.duplicate.project') || 'تكرار المشروع'
+          }
+        });
+        
+        duplicateBtn.innerHTML = `<i class="fas fa-copy"></i> ${dependencies.localizationService.translate('button.duplicate') || 'تكرار'}`;
+        actionsWrapper.appendChild(duplicateBtn);
+      }
+      
+      // زر المشاركة (في المستقبل)
+      if (APP_CONSTANTS.ENABLE_PROJECT_SHARING) {
+        const shareBtn = createElement('button', {
+          classNames: ['project-action-btn', 'share-project-btn'],
+          attributes: {
+            'title': dependencies.localizationService.translate('button.share.project') || 'مشاركة المشروع'
+          }
+        });
+        
+        shareBtn.innerHTML = `<i class="fas fa-share-alt"></i> ${dependencies.localizationService.translate('button.share') || 'مشاركة'}`;
+        actionsWrapper.appendChild(shareBtn);
+      }
+      
+      card.appendChild(actionsWrapper);
+      
+      // إضافة معلومات إضافية (في المستقبل)
+      if (APP_CONSTANTS.SHOW_PROJECT_PREVIEW) {
+        const preview = createElement('div', { classNames: ['project-preview'] });
+        card.appendChild(preview);
+      }
+      
+      return card;
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.card.create') || 
+                 'فشل في إنشاء بطاقة المشروع',
+        origin: 'ProjectListRenderer._createProjectCard'
+      });
+      
+      return null;
+    }
   }
-
+  
   /**
-   * Renders the list of saved projects in the DOM.
-   * @private
-   * @param {Array<import('../../core/state-store.js').ProjectState>} projects - Array of project objects.
+   * عرض قائمة المشاريع
+   * @param {Array} projects - قائمة المشاريع
    */
   function _renderProjects(projects) {
     if (!listContainer || !noProjectsMsgElement) {
-      (dependencies.errorLogger.logWarning || console.warn)('Project list container or no-projects message element not found. Cannot render projects.');
+      dependencies.errorLogger.warn({
+        message: dependencies.localizationService.translate('warning.projects.container.not.found') || 
+                 'حاوية المشاريع غير موجودة. لا يمكن عرض المشاريع.',
+        origin: 'ProjectListRenderer._renderProjects'
+      });
       return;
     }
-
-    listContainer.innerHTML = ''; // Clear previous list
-
-    if (projects && projects.length > 0) {
-      projects.sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)); // Show newest first
-      projects.forEach(project => {
-        const card = _createProjectCard(project);
-        if (card) {
-          listContainer.appendChild(card);
-        }
+    
+    try {
+      // مسح الحاوية الحالية
+      listContainer.innerHTML = '';
+      
+      // التحقق من وجود مشاريع
+      if (projects && projects.length > 0) {
+        // ترتيب المشاريع حسب التاريخ
+        const sortedProjects = [...projects].sort((a, b) => {
+          return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+        });
+        
+        // إنشاء البطاقات
+        sortedProjects.forEach(project => {
+          const card = _createProjectCard(project);
+          if (card) listContainer.appendChild(card);
+        });
+        
+        // إخفاء رسالة "لا توجد مشاريع"
+        noProjectsMsgElement.style.display = 'none';
+      } else {
+        // لا توجد مشاريع
+        noProjectsMsgElement.style.display = 'block';
+        noProjectsMsgElement.textContent = dependencies.localizationService.translate('project.list.empty') || 
+                                            'لا توجد مشاريع محفوظة بعد.';
+      }
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.projects.render') || 
+                 'فشل في عرض المشاريع',
+        origin: 'ProjectListRenderer._renderProjects'
       });
-      noProjectsMsgElement.style.display = 'none';
-    } else {
-      noProjectsMsgElement.style.display = 'block'; // Or 'grid-column: 1 / -1; text-align: center;'
     }
   }
-
+  
   /**
-   * Handles clicking on a project card (to load it) or one of its action buttons.
-   * Uses event delegation.
-   * @private
-   * @param {Event} event
+   * معالجة تفاعل المستخدم مع القائمة
+   * @param {Event} event - حدث المستخدم
    */
   async function _handleListInteraction(event) {
     const card = event.target.closest('.project-card');
+    
     if (!card) return;
-
+    
     const projectId = card.dataset.projectId;
     if (!projectId) return;
-
+    
+    // معالجة الحذف
     if (event.target.closest('.delete-project-btn')) {
-      // Handle Delete
-      const projectToDelete = dependencies.stateStore.getState().savedProjects.find(p => p.id === projectId);
-      const confirmed = await dependencies.modalFactoryAPI.showConfirm({
-        title: dependencies.localizationService.translate('project.delete.confirmTitle', 'تأكيد الحذف') || 'تأكيد الحذف',
-        message: dependencies.localizationService.translate('project.delete.confirmMessage', { projectName: projectToDelete?.title || projectId }) 
-                 || `هل أنت متأكد أنك تريد حذف مشروع "${projectToDelete?.title || projectId}"؟ هذا الإجراء لا يمكن التراجع عنه.`,
-        confirmText: dependencies.localizationService.translate('button.delete', 'حذف'),
-        cancelText: dependencies.localizationService.translate('button.cancel', 'إلغاء')
-      });
-
-      if (confirmed) {
-        dependencies.stateStore.dispatch(ACTIONS.DELETE_PROJECT_FROM_LIST, projectId);
-        dependencies.notificationServiceAPI?.showSuccess(dependencies.localizationService.translate('project.deleted.success', 'تم حذف المشروع بنجاح.') || 'تم حذف المشروع بنجاح.');
+      try {
+        const projectToDelete = dependencies.stateStore.getState().savedProjects.find(p => p.id === projectId);
+        
+        if (!projectToDelete) {
+          dependencies.errorLogger.warn({
+            message: dependencies.localizationService.translate('warning.project.not.found', { id: projectId }) || 
+                     `المشروع غير موجود: ${projectId}`,
+            origin: 'ProjectListRenderer._handleListInteraction'
+          });
+          return;
+        }
+        
+        // إظهار نافذة التأكيد
+        const confirmed = await dependencies.modalFactoryAPI.showConfirm({
+          title: dependencies.localizationService.translate('project.delete.confirm.title') || 
+                 'تأكيد الحذف',
+          message: dependencies.localizationService.translate('project.delete.confirm.message', {
+            projectName: projectToDelete?.title || projectId
+          }) || 
+          `هل أنت متأكد أنك تريد حذف مشروع "${projectToDelete?.title || projectId}"؟ هذا الإجراء لا يمكن التراجع عنه.`,
+          confirmText: dependencies.localizationService.translate('button.delete') || 'حذف',
+          cancelText: dependencies.localizationService.translate('button.cancel') || 'إلغاء',
+          type: 'danger'
+        });
+        
+        if (confirmed) {
+          dependencies.stateStore.dispatch(ACTIONS.DELETE_PROJECT_FROM_LIST, projectId);
+          
+          // إرسال إشعار بنجاح الحذف
+          dependencies.notificationServiceAPI?.showSuccess(
+            dependencies.localizationService.translate('project.deleted.success') || 'تم حذف المشروع بنجاح.'
+          );
+          
+          // نشر حدث لتخطيط التطبيق
+          dependencies.eventAggregator.publish(EVENTS.PROJECT_DELETED, { projectId });
+        }
+      } catch (error) {
+        dependencies.errorLogger.error({
+          error,
+          message: dependencies.localizationService.translate('error.project.delete', { id: projectId }) || 
+                   `فشل في حذف المشروع ${projectId}`,
+          origin: 'ProjectListRenderer._handleListInteraction'
+        });
+        
+        dependencies.notificationServiceAPI?.showError(
+          dependencies.localizationService.translate('project.delete.failed', { id: projectId }) || 
+          `فشل في حذف المشروع ${projectId}`
+        );
       }
-    } else if (event.target.closest('.duplicate-project-btn')) {
-      // Handle Duplicate (Future)
-      // dependencies.stateStore.dispatch(ACTIONS.DUPLICATE_PROJECT, projectId);
-      // dependencies.notificationServiceAPI?.showInfo('جاري تكرار المشروع...');
-      (dependencies.errorLogger.logInfo || console.info)('Duplicate project action clicked for:', projectId);
-    } else {
-      // Clicked on card itself (or title/meta, not a specific action button) -> Load project
-      const projectToLoad = dependencies.stateStore.getState().savedProjects.find(p => p.id === projectId);
-      if (projectToLoad) {
-        dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, { ...projectToLoad }); // Dispatch a copy
-        // Screen navigation should be handled by stateStore's activeScreen update
-        // or by screenNavigator listening to project load
-      } else {
-        (dependencies.errorLogger.logWarning || console.warn)('Project to load not found in state:', projectId);
+    } 
+    // معالجة التكرار
+    else if (event.target.closest('.duplicate-project-btn') && APP_CONSTANTS.ENABLE_PROJECT_DUPLICATION) {
+      try {
+        const projectToDuplicate = dependencies.stateStore.getState().savedProjects.find(p => p.id === projectId);
+        
+        if (!projectToDuplicate) {
+          dependencies.errorLogger.warn({
+            message: dependencies.localizationService.translate('warning.project.not.found', { id: projectId }) || 
+                     `المشروع غير موجود: ${projectId}`,
+            origin: 'ProjectListRenderer._handleListInteraction'
+          });
+          return;
+        }
+        
+        // نسخ المشروع
+        const duplicatedProject = {
+          ...projectToDuplicate,
+          id: `dup-${Date.now()}`,
+          title: `${projectToDuplicate.title} (${dependencies.localizationService.translate('project.copy') || 'نسخ'})`,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        
+        // إرسال الحدث
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_DUPLICATED, { project: duplicatedProject });
+        
+        // إضافة المشروع الجديد إلى الحالة
+        dependencies.stateStore.dispatch(ACTIONS.ADD_PROJECT, duplicatedProject);
+        
+        // إشعار نجاح
+        dependencies.notificationServiceAPI?.showSuccess(
+          dependencies.localizationService.translate('project.duplicated.success') || 'تم تكرار المشروع بنجاح.'
+        );
+      } catch (error) {
+        dependencies.errorLogger.error({
+          error,
+          message: dependencies.localizationService.translate('error.project.duplicate', { id: projectId }) || 
+                   `فشل في تكرار المشروع ${projectId}`,
+          origin: 'ProjectListRenderer._handleListInteraction'
+        });
+        
+        dependencies.notificationServiceAPI?.showError(
+          dependencies.localizationService.translate('project.duplicate.failed', { id: projectId }) || 
+          `فشل في تكرار المشروع ${projectId}`
+        );
+      }
+    }
+    // معالجة فتح المشروع
+    else if (event.target.closest('.project-card') || event.target.closest('h3')) {
+      try {
+        const projectToLoad = dependencies.stateStore.getState().savedProjects.find(p => p.id === projectId);
+        
+        if (!projectToLoad) {
+          dependencies.errorLogger.warn({
+            message: dependencies.localizationService.translate('warning.project.not.found', { id: projectId }) || 
+                     `المشروع غير موجود: ${projectId}`,
+            origin: 'ProjectListRenderer._handleListInteraction'
+          });
+          return;
+        }
+        
+        // تحميل المشروع
+        dependencies.stateStore.dispatch(ACTIONS.LOAD_PROJECT, { ...projectToLoad });
+        
+        // نشر حدث لتخطيط التطبيق
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_LOADED, { project: projectToLoad });
+        
+        // تحديث شاشة التحرير
+        if (dependencies.screenNavigator) {
+          dependencies.screenNavigator.navigateTo('editor');
+        }
+      } catch (error) {
+        dependencies.errorLogger.error({
+          error,
+          message: dependencies.localizationService.translate('error.project.load', { id: projectId }) || 
+                   `فشل في تحميل المشروع ${projectId}`,
+          origin: 'ProjectListRenderer._handleListInteraction'
+        });
+        
+        dependencies.notificationServiceAPI?.showError(
+          dependencies.localizationService.translate('project.load.failed', { id: projectId }) || 
+          `فشل في تحميل المشروع ${projectId}`
+        );
       }
     }
   }
   
-  function _setDependencies(injectedDeps) {
-    Object.assign(dependencies, injectedDeps);
+  /**
+   * معالجة تفاعل لوحة المفاتيح
+   * @param {Event} event - حدث لوحة المفاتيح
+   */
+  function _handleKeyboardNavigation(event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      const card = event.target.closest('.project-card');
+      if (card && card.dataset.projectId) {
+        event.preventDefault(); // منع المسافة من التمرير
+        _handleListInteraction(event);
+      }
+    }
   }
-
-  // Public API is mainly the initializer
+  
+  /**
+   * تحديد الاعتمادات
+   * @param {Object} injectedDeps - الاعتمادات
+   */
+  function _setDependencies(injectedDeps) {
+    if (injectedDeps) {
+      Object.keys(injectedDeps).forEach(key => {
+        if (injectedDeps[key]) {
+          dependencies[key] = injectedDeps[key];
+        }
+      });
+    }
+  }
+  
+  /**
+   * تنظيف الموارد
+   */
+  function cleanup() {
+    // إزالة المستمعين
+    if (listContainer) {
+      listContainer.removeEventListener('click', _handleListInteraction);
+      listContainer.removeEventListener('keydown', _handleKeyboardNavigation);
+    }
+  }
+  
   return {
     _setDependencies,
-    // render: _renderProjects, // Could expose if manual re-render needed, but state-driven is better
+    _renderProjects: _renderProjects,
+    _handleListInteraction,
+    cleanup
   };
-
-})(); // IIFE removed
-
+})();
 
 /**
- * Initialization function for the ProjectListRenderer.
- * @param {object} deps
- * @param {import('../../core/state-store.js').default} deps.stateStore
- * @param {import('../../core/event-aggregator.js').default} deps.eventAggregator
- * @param {import('../../core/error-logger.js').default} deps.errorLogger
- * @param {import('../../core/localization.service.js').default} deps.localizationService
- * @param {ReturnType<import('../../shared-ui-components/modal.factory.js').initializeModalFactory>} deps.modalFactoryAPI
- * @param {ReturnType<import('../../shared-ui-components/notification.presenter.js').initializeNotificationPresenter>} [deps.notificationServiceAPI]
+ * وظيفة التهيئة
+ * @param {Object} deps - الاعتمادات
+ * @returns {Object} - واجهة عامة للوحدة
  */
 export function initializeProjectListRenderer(deps) {
   projectListRenderer._setDependencies(deps);
-  const { stateStore, errorLogger, eventAggregator } = deps;
-
+  
+  const {
+    stateStore,
+    errorLogger,
+    eventAggregator,
+    screenNavigator
+  } = deps;
+  
+  // تعيين مراجع العناصر
   projectListRenderer.listContainerRef = DOMElements.projectsListContainer;
   projectListRenderer.noProjectsMsgElRef = DOMElements.noProjectsMessage;
+  projectListRenderer.screenNavigator = screenNavigator;
   
-  const _renderProjectsLocal = (projects) => { // Local scoped version of _renderProjects
-    if (!projectListRenderer.listContainerRef || !projectListRenderer.noProjectsMsgElRef) return;
-    projectListRenderer.listContainerRef.innerHTML = '';
-    if (projects && projects.length > 0) {
-      projects.sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      projects.forEach(p => {
-        const card = (function _createProjectCardLocal(project) { /* ... logic of _createProjectCard using deps ... */ 
-            if (!project || !project.id) return null;
-            const card = createElement('div', { classNames: 'project-card', attributes: { 'data-project-id': project.id, 'tabindex': '0', 'role': 'button' } });
-            card.appendChild(createElement('h3', { textContent: project.title || DEFAULT_PROJECT_SCHEMA.title }));
-            const meta = createElement('div', { classNames: 'project-meta' });
-            const lu = project.updatedAt ? new Date(project.updatedAt).toLocaleString(deps.localizationService.getCurrentLanguage() || 'ar-SA') : 'N/A';
-            meta.appendChild(createElement('span', { textContent: `آخر تحديث: ${lu}` }));
-            card.appendChild(meta);
-            const actions = createElement('div', {classNames:'project-actions'});
-            const delBtn = createElement('button', {classNames:'project-action-btn delete-project-btn',innerHTML: '<i class="fas fa-trash-alt"></i> حذف'});
-            actions.appendChild(delBtn);
-            card.appendChild(actions);
-            return card;
-        })(p);
-        if (card) projectListRenderer.listContainerRef.appendChild(card);
-      });
-      projectListRenderer.noProjectsMsgElRef.style.display = 'none';
-    } else {
-      projectListRenderer.noProjectsMsgElRef.style.display = 'block';
-    }
-  };
-
-  const _handleListInteractionLocal = async (event) => { /* ... logic of _handleListInteraction using deps ... */ 
-    const card = event.target.closest('.project-card');
-    if (!card || !card.dataset.projectId) return;
-    const projectId = card.dataset.projectId;
-
-    if (event.target.closest('.delete-project-btn')) {
-        const project = stateStore.getState().savedProjects.find(p => p.id === projectId);
-        const confirmed = await deps.modalFactoryAPI.showConfirm({
-            title: 'تأكيد الحذف', message: `هل أنت متأكد من حذف مشروع "${project?.title || projectId}"؟`
-        });
-        if (confirmed) stateStore.dispatch(ACTIONS.DELETE_PROJECT_FROM_LIST, projectId);
-    } else { // Click on card body/title
-        const project = stateStore.getState().savedProjects.find(p => p.id === projectId);
-        if (project) stateStore.dispatch(ACTIONS.LOAD_PROJECT, { ...project });
-    }
-  };
-
-  if (projectListRenderer.listContainerRef) {
-    projectListRenderer.listContainerRef.addEventListener('click', _handleListInteractionLocal);
-    // Add keydown listener for accessibility (Enter/Space to activate card)
-    projectListRenderer.listContainerRef.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-            const card = event.target.closest('.project-card');
-            if (card && card.dataset.projectId) {
-                event.preventDefault(); // Prevent space from scrolling
-                _handleListInteractionLocal(event); // Treat as click
-            }
-        }
+  // التحقق من وجود الحاوية
+  if (!projectListRenderer.listContainerRef || !projectListRenderer.noProjectsMsgElRef) {
+    errorLogger.warn({
+      message: 'حاوية المشاريع غير موجودة. لا يمكن تهيئة عرض المشاريع.',
+      origin: 'initializeProjectListRenderer'
     });
-  } else {
-    (errorLogger.logWarning || console.warn)('Project list container not found for event delegation.');
+    return {
+      cleanup: () => {}
+    };
   }
-
-
-  // Subscribe to changes in savedProjects from stateStore
+  
+  // عرض المشاريع
+  const _renderProjectsLocal = (projects) => {
+    if (!projectListRenderer.listContainerRef || !projectListRenderer.noProjectsMsgElRef) return;
+    
+    try {
+      projectListRenderer.listContainerRef.innerHTML = '';
+      
+      if (projects && projects.length > 0) {
+        // ترتيب المشاريع حسب التاريخ
+        const sortedProjects = [...projects].sort((a, b) => {
+          return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+        });
+        
+        // إنشاء بطاقات المشاريع
+        sortedProjects.forEach(project => {
+          const card = (function _createProjectCardLocal(project) {
+            if (!project || !project.id) return null;
+            
+            try {
+              const card = createElement('div', {
+                classNames: ['project-card'],
+                attributes: { 
+                  'data-project-id': project.id,
+                  'tabindex': '0',
+                  'role': 'button',
+                  'aria-label': deps.localizationService.translate('project.card.aria.label', {
+                    title: project.title || 'مشروع جديد',
+                    updated: project.updatedAt ? timeFormatter.format(project.updatedAt, 'datetime') : 'جديد'
+                  }) || `مشروع ${project.title || 'بدون عنوان'} - تم التحديث: ${project.updatedAt ? new Date(project.updatedAt).toLocaleString() : 'جديد'}`
+                }
+              });
+              
+              // عنوان المشروع
+              const title = createElement('h3', {
+                textContent: project.title || DEFAULT_PROJECT_SCHEMA.title
+              });
+              
+              // معلومات إضافية
+              const meta = createElement('div', { classNames: ['project-meta'] });
+              
+              // آخر تحديث
+              const lastUpdated = project.updatedAt ? 
+                timeFormatter.format(project.updatedAt, 'datetime') : 
+                deps.localizationService.translate('project.never.updated') || 'لم يتم التحديث';
+                
+              const dateSpan = createElement('span', {
+                textContent: `${deps.localizationService.translate('project.last.updated') || 'آخر تحديث'}: ${lastUpdated}`
+              });
+              
+              // إضافة العناصر إلى البطاقة
+              card.appendChild(title);
+              meta.appendChild(dateSpan);
+              
+              // معلومات السورة والآيات
+              if (project.quranSelection && project.quranSelection.surahId) {
+                const surahInfo = createElement('span', {
+                  textContent: `${deps.localizationService.translate('project.surah') || 'السورة'}: ${project.quranSelection.surahId}, ${deps.localizationService.translate('project.verses') || 'الآيات'}: ${project.quranSelection.startAyah}-${project.quranSelection.endAyah}`
+                });
+                meta.appendChild(surahInfo);
+              }
+              
+              card.appendChild(meta);
+              
+              // عناصر الإجراءات
+              const actionsWrapper = createElement('div', { classNames: ['project-actions'] });
+              
+              // زر الحذف
+              const deleteBtn = createElement('button', {
+                classNames: ['project-action-btn', 'delete-project-btn'],
+                attributes: {
+                  'title': deps.localizationService.translate('button.delete.project') || 'حذف المشروع'
+                }
+              });
+              
+              deleteBtn.innerHTML = `<i class="fas fa-trash-alt"></i> ${deps.localizationService.translate('button.delete') || 'حذف'}`;
+              actionsWrapper.appendChild(deleteBtn);
+              
+              // زر التكرار
+              if (APP_CONSTANTS.ENABLE_PROJECT_DUPLICATION) {
+                const duplicateBtn = createElement('button', {
+                  classNames: ['project-action-btn', 'duplicate-project-btn'],
+                  attributes: {
+                    'title': deps.localizationService.translate('button.duplicate.project') || 'تكرار المشروع'
+                  }
+                });
+                
+                duplicateBtn.innerHTML = `<i class="fas fa-copy"></i> ${deps.localizationService.translate('button.duplicate') || 'تكرار'}`;
+                actionsWrapper.appendChild(duplicateBtn);
+              }
+              
+              // زر المشاركة
+              if (APP_CONSTANTS.ENABLE_PROJECT_SHARING) {
+                const shareBtn = createElement('button', {
+                  classNames: ['project-action-btn', 'share-project-btn'],
+                  attributes: {
+                    'title': deps.localizationService.translate('button.share.project') || 'مشاركة المشروع'
+                  }
+                });
+                
+                shareBtn.innerHTML = `<i class="fas fa-share-alt"></i> ${deps.localizationService.translate('button.share') || 'مشاركة'}`;
+                actionsWrapper.appendChild(shareBtn);
+              }
+              
+              card.appendChild(actionsWrapper);
+              return card;
+            } catch (error) {
+              deps.errorLogger.error({
+                error,
+                message: deps.localizationService.translate('error.project.card.create') || 'فشل في إنشاء بطاقة المشروع',
+                origin: 'ProjectListRenderer._createProjectCardLocal'
+              });
+              return null;
+            }
+          })(project);
+          
+          if (card) projectListRenderer.listContainerRef.appendChild(card);
+        });
+        
+        // إخفاء رسالة "لا توجد مشاريع"
+        projectListRenderer.noProjectsMsgElRef.style.display = 'none';
+      } else {
+        // لا توجد مشاريع
+        projectListRenderer.noProjectsMsgElRef.style.display = 'block';
+        projectListRenderer.noProjectsMsgElRef.textContent = deps.localizationService.translate('project.list.empty') || 'لا توجد مشاريع محفوظة بعد.';
+      }
+    } catch (error) {
+      deps.errorLogger.error({
+        error,
+        message: deps.localizationService.translate('error.projects.render') || 'فشل في عرض المشاريع',
+        origin: 'initializeProjectListRenderer._renderProjectsLocal'
+      });
+    }
+  }
+  
+  // إضافة مستمعي الأحداث
+  if (projectListRenderer.listContainerRef) {
+    projectListRenderer.listContainerRef.addEventListener('click', projectListRenderer._handleListInteraction);
+    projectListRenderer.listContainerRef.addEventListener('keydown', _handleKeyboardNavigation);
+  }
+  
+  // الاشتراك في تغييرات الحالة
   const unsubscribeState = stateStore.subscribe((newState) => {
-    // Re-render only if savedProjects array identity changes or active screen is initial
-    // A more robust check might compare actual content if identity doesn't always change.
-    if (newState.activeScreen === 'initial') { // Only render if this screen is active
-        _renderProjectsLocal(newState.savedProjects);
+    // فقط تحديث إذا كانت الشاشة النشطة هي الشاشة الافتراضية
+    if (newState.activeScreen === 'initial') {
+      _renderProjectsLocal(newState.savedProjects);
     }
   });
-
-  // Initial render
+  
+  // تهيئة عرض المشاريع
   if (stateStore.getState().activeScreen === 'initial') {
-      _renderProjectsLocal(stateStore.getState().savedProjects);
+    _renderProjectsLocal(stateStore.getState().savedProjects);
   }
-
-  // console.info('[ProjectListRenderer] Initialized.');
-
+  
   return {
     cleanup: () => {
       unsubscribeState();
+      
       if (projectListRenderer.listContainerRef) {
-        projectListRenderer.listContainerRef.removeEventListener('click', _handleListInteractionLocal);
-        projectListRenderer.listContainerRef.removeEventListener('keydown', /* keydown handler ref */ () => {});
+        projectListRenderer.listContainerRef.removeEventListener('click', projectListRenderer._handleListInteraction);
+        projectListRenderer.listContainerRef.removeEventListener('keydown', _handleKeyboardNavigation);
       }
-      // console.info('[ProjectListRenderer] Cleaned up.');
-    },
-    // renderManually: (projects) => _renderProjectsLocal(projects) // If manual trigger needed
+    }
   };
 }
-
-export default projectListRenderer;
