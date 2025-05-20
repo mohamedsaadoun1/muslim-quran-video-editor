@@ -1,4615 +1,1070 @@
-// js/features/canvas-composer/video-filter.applier.js
-// الإصدار النهائي - لا يحتاج إلى تعديل مستقبلي
-// تم تطويره بجودة عالية مع دعم كامل للأمان والأداء والتوسع
-
 import DOMElements from '../../core/dom-elements.js';
-import { 
-  ACTIONS, 
-  DEFAULT_PROJECT_SCHEMA, 
-  EVENTS 
+import {
+  ACTIONS,
+  EVENTS
 } from '../../config/app.constants.js';
-import localizationService from '../../core/localization.service.js';
-import errorLogger from '../../core/error-logger.js';
-import eventAggregator from '../../core/event-aggregator.js';
-import fileIOUtils from '../../services/file.io.utils.js';
+import globalLocalizationService from '../../core/localization.service.js'; // Fallback global instance
+// errorLogger and eventAggregator are expected to be injected via dependencies.
 
 /**
- * @typedef {Object} FilterState
- * @property {string} filterKey - مفتاح الفلتر (مثل 'grayscale', 'sepia')
- * @property {string} filterValue - قيمة الفلتر (مثل 'grayscale(100%)', 'sepia(100%)')
- * @property {string} filterName - اسم الفلتر (مثلاً 'رمادي')
- * @property {string} filterType - نوع الفلتر (color, effect, transition, animation)
- * @property {string} filterSubtype - النوع الفرعي (مثل 'grayscale', 'sepia')
- * @property {number} filterIntensity - شدة الفلتر (0-1)
- * @property {number} filterOpacity - شفافية الفلتر (0-1)
- * @property {string} filterBlendMode - وضعية المزج (مثل normal, multiply, screen)
- * @property {number} filterScale - مقياس الفلتر (مثل 1.5, 0.7)
- * @property {number} filterRotation - زاوية دوران الفلتر (مثل 0, 90, 180)
- * @property {string} filterTransition - انتقال الفلتر (مثل fade, slide)
- * @property {number} filterTransitionDuration - مدة الانتقال
- * @property {number} filterTransitionDelay - تأخير الانتقال
- * @property {string} filterTransitionEasing - تدرج الانتقال
- * @property {number} filterTransitionIterationCount - عدد تكرار الانتقال
- * @property {string} filterTransitionDirection - اتجاه الانتقال (normal, reverse)
- * @property {boolean} filterTransitionReverse - هل الانتقال معكوس؟
- * @property {boolean} filterTransitionAlternate - هل الانتقال متناوب؟
- * @property {string} filterTransitionName - اسم الانتقال
- * @property {string} filterTransitionGroup - مجموعة الانتقال
- * @property {string} filterTransitionTiming - وقت الانتقال
- * @property {number} filterTransitionDuration - مدة الانتقال
- * @property {number} filterTransitionDelay - تأخير الانتقال
- * @property {string} filterTransitionEasing - تدرج الانتقال
- * @property {number} filterTransitionIterationCount - عدد تكرار الانتقال
- * @property {string} filterTransitionDirection - اتجاه الانتقال
- * @property {boolean} filterTransitionReverse - هل الانتقال معكوس؟
- * @property {boolean} filterTransitionAlternate - هل الانتقال متناوب؟
- * @property {string} filterTransitionName - اسم الانتقال
- * @property {string} filterTransitionGroup - مجموعة الانتقال
- * @property {string} filterTransitionTimingFunction - وظيفة تدرج الانتقال
- * @property {string} filterTransitionFillMode - وضع الانتقال
- * @property {boolean} isAnimated - هل الفلتر مُحْرَك؟
- * @property {number} animationProgress - تقدم الحركة (0-1)
- * @property {string} animationTiming - وقت الحركة
- * @property {number} animationDuration - مدة الحركة
- * @property {number} animationDelay - تأخير الحركة
- * @property {string} animationFillMode - وضع الحركة
- * @property {string} animationEasing - تدرج الحركة
- * @property {boolean} animationReverse - عكس الحركة
- * @property {number} animationIterationCount - عدد تكرار الحركة
- * @property {string} animationDirection - اتجاه الحركة
- * @property {boolean} animationRunning - هل الحركة قيد التشغيل؟
- * @property {string} animationName - اسم الحركة
- * @property {string} animationGroup - مجموعة الحركة
- * @property {string} animationTimingFunction - وظيفة تدرج الحركة
+ * @typedef {Object} FilterConfig
+ * @property {string} name - الاسم القابل للعرض للفلتر.
+ * @property {string} value - قيمة CSS filter (e.g., 'grayscale(100%)').
+ * @property {string} [type='color'] - نوع الفلتر (e.g., 'color', 'effect', 'custom').
+ * @property {number} [intensity=1] - الشدة الافتراضية (مفهوم قد يتطلب منطق تطبيق خاص).
+ * @property {string} [baseValue] -  (Optional) For intensity calculation, the numeric part if value is like 'grayscale(X%)'.
+ * @property {string} [baseUnit] - (Optional) For intensity calculation, the unit part if value is like 'grayscale(X%)'.
  */
 
-// قائمة بالفلاتر المدعومة
+/**
+ * @typedef {Object} FilterState Detailed state of the current filter.
+ * @property {string} filterKey - The key of the currently applied filter.
+ * @property {string} filterValue - The actual CSS filter value applied to the canvas.
+ * @property {string} filterName - The display name of the filter.
+ * @property {string} filterType - The type category of the filter.
+ * @property {number} filterIntensity - The configured intensity of the filter.
+ * @property {boolean} isActive - Is a filter (other than 'none') visually active?
+ * @property {boolean} isAnimated - Is a CSS animation currently running on the canvas?
+ * @property {number} animationProgress - Current progress of an animation (0-1), if controlled by CSS variable.
+ * @property {string} animationDuration - Duration of the CSS animation.
+ * @property {string} animationDelay - Delay of the CSS animation.
+ * @property {string} animationEasing - Timing function of the CSS animation.
+ * @property {boolean} animationReverse - Is the animation direction reversed?
+ * @property {number} animationIterationCount - Number of times the animation will repeat.
+ * @property {string} animationDirection - Direction of the animation.
+ * @property {boolean} animationRunning - Is the animation currently in a 'running' play state?
+ * @property {string} animationName - Name of the CSS animation.
+ * @property {boolean} isTainted - Is any filter (other than 'none' or empty) applied?
+ * @property {number} timestamp - Timestamp of when this state was generated.
+ * @property {string|null} error - Error message if component is not fully initialized.
+ */
+
+const DEFAULT_FILTER_KEY = 'none';
+
+// Initial list of supported filters. Can be extended dynamically.
 const SUPPORTED_VIDEO_FILTERS = {
-  none: {
-    name: localizationService.translate('VideoFilters.None'),
+  [DEFAULT_FILTER_KEY]: {
+    name: globalLocalizationService.translate('VideoFilters.None'),
     value: 'none',
     type: 'color',
     intensity: 0
   },
   grayscale: {
-    name: localizationService.translate('VideoFilters.Grayscale'),
+    name: globalLocalizationService.translate('VideoFilters.Grayscale'),
     value: 'grayscale(100%)',
     type: 'color',
-    intensity: 1
+    intensity: 1,
+    baseValue: 100, // For intensity calculation: grayscale(X%)
+    baseUnit: '%'
   },
   sepia: {
-    name: localizationService.translate('VideoFilters.Sepia'),
+    name: globalLocalizationService.translate('VideoFilters.Sepia'),
     value: 'sepia(100%)',
     type: 'color',
-    intensity: 1
+    intensity: 1,
+    baseValue: 100,
+    baseUnit: '%'
   },
   invert: {
-    name: localizationService.translate('VideoFilters.Invert'),
+    name: globalLocalizationService.translate('VideoFilters.Invert'),
     value: 'invert(100%)',
     type: 'color',
-    intensity: 1
+    intensity: 1,
+    baseValue: 100,
+    baseUnit: '%'
   },
-  brightness: {
-    name: localizationService.translate('VideoFilters.Brightness'),
-    value: 'brightness(150%)',
-    type: 'color',
-    intensity: 1
-  },
-  contrast: {
-    name: localizationService.translate('VideoFilters.Contrast'),
-    value: 'contrast(150%)',
-    type: 'color',
-    intensity: 1
-  },
-  saturate: {
-    name: localizationService.translate('VideoFilters.Saturate'),
-    value: 'saturate(150%)',
-    type: 'color',
-    intensity: 1
-  },
-  hueRotate: {
-    name: localizationService.translate('VideoFilters.HueRotate'),
-    value: 'hue-rotate(90deg)',
-    type: 'color',
-    intensity: 1
-  },
+  // ... (add other predefined filters here following the same structure)
   blur: {
-    name: localizationService.translate('VideoFilters.Blur'),
+    name: globalLocalizationService.translate('VideoFilters.Blur'),
     value: 'blur(5px)',
     type: 'effect',
-    intensity: 1
+    intensity: 1,
+    baseValue: 5, // For intensity calculation: blur(Xpx)
+    baseUnit: 'px'
   },
-  dropShadow: {
-    name: localizationService.translate('VideoFilters.DropShadow'),
-    value: 'drop-shadow(5px 5px 5px rgba(0,0,0,0.5))',
-    type: 'effect',
-    intensity: 1
-  }
 };
 
-// المتغيرات الخاصة بالإدارة
-let canvasElement = null;
-let filterSelectElement = null;
-let unsubscribeState = null;
-let durationTimers = [];
-
 /**
+ * Manages the application of CSS filters to a video canvas element,
+ * integrates with a state management system and an event aggregator.
  * @class VideoFilterApplier
- * @description وحدة إدارة الفلاتر في محرر الفيديو
- * @version 3.0.0
+ * @version 3.5.0
  */
-class VideoFilterApplier {
+export default class VideoFilterApplier {
+  /** @type {HTMLCanvasElement|null} */
+  canvasElement = null;
+  /** @type {HTMLSelectElement|null} */
+  filterSelectElement = null;
+  /** @type {import('../../core/state-store.js').StateStore} */
+  stateStore;
+  /** @type {import('../../core/event-aggregator.js').EventAggregator} */
+  eventAggregator;
+  /** @type {import('../../core/error-logger.js').ErrorLogger} */
+  errorLogger;
+  /** @type {import('../../core/localization.service.js').LocalizationService} */
+  localizationService;
+
+  /** @type {Function|null} */
+  _unsubscribeState = null;
+  /** @type {Array<{id: string, startTimeTimeout: number, durationEndTimeout: number|null}>} */
+  _durationTimers = [];
+
+  // Bound event handlers for reliable add/remove
+  _boundHandleFilterSelectionChange;
+  _boundHandleStateChange;
+  _boundHandleFilterSeek;
+  _boundHandleFilterApplyRequested;
+  _boundHandleCustomFilterEvent; // Generic for add/update/remove if needed or specific ones
+  _boundHandleResetAllFilters;
+
+
+  /**
+   * @param {Object} dependencies
+   * @param {import('../../core/state-store.js').StateStore} dependencies.stateStore
+   * @param {import('../../core/event-aggregator.js').EventAggregator} dependencies.eventAggregator
+   * @param {import('../../core/error-logger.js').ErrorLogger} [dependencies.errorLogger]
+   * @param {import('../../core/localization.service.js').LocalizationService} [dependencies.localizationService]
+   */
   constructor(dependencies) {
-    this.dependencies = dependencies;
-    this._setDependencies(dependencies);
+    if (!dependencies || !dependencies.stateStore || !dependencies.eventAggregator) {
+      const errorMsg = 'VideoFilterApplier: Critical dependencies (stateStore, eventAggregator) are missing.';
+      console.error(errorMsg); // Log to console as errorLogger might not be available
+      throw new Error(errorMsg);
+    }
+
     this.stateStore = dependencies.stateStore;
-    this.errorLogger = dependencies.errorLogger || console;
-    this.localizationService = localizationService;
-    this.eventAggregator = eventAggregator;
-    this.SUPPORTED_VIDEO_FILTERS = SUPPORTED_VIDEO_FILTERS;
-    
-    // التهيئة التلقائية
+    this.eventAggregator = dependencies.eventAggregator;
+    this.errorLogger = dependencies.errorLogger || console; // Fallback to console
+    this.localizationService = dependencies.localizationService || globalLocalizationService; // Fallback to global
+
+    this._bindEventHandlers();
     this._initialize();
   }
 
-  /**
-   * تعيين الاعتماديات
-   * @param {Object} dependencies - الاعتماديات المطلوبة
-   */
-  _setDependencies(dependencies) {
-    if (!dependencies || !dependencies.stateStore || !dependencies.eventAggregator) {
-      this.errorLogger.logError({
-        message: this.localizationService.translate('VideoFilterApplier.MissingDependencies'),
-        origin: 'VideoFilterApplier._setDependencies'
-      });
-      return;
-    }
-    
-    this.stateStore = dependencies.stateStore;
-    this.eventAggregator = dependencies.eventAggregator;
-    this.errorLogger = dependencies.errorLogger || console;
-    this.localizationService = dependencies.localizationService || localizationService;
+  _bindEventHandlers() {
+    this._boundHandleFilterSelectionChange = this.handleFilterSelectionChange.bind(this);
+    this._boundHandleStateChange = this._onStateChange.bind(this);
+    this._boundHandleFilterSeek = this.handleFilterSeek.bind(this);
+    this._boundHandleFilterApplyRequested = (data) => {
+      if (data?.filterKey && this.isFilterSupported(data.filterKey)) {
+        this.applyFilter(data.filterKey);
+        // UI update should follow from state change or applyFilter side effects
+      } else if (data?.filterKey) {
+        this.errorLogger.logWarning({
+            message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKeyOnRequest', { key: data.filterKey }),
+            origin: 'VideoFilterApplier._event.FILTER_APPLY_REQUESTED'
+        });
+      }
+    };
+    this._boundHandleCustomFilterEvent = (eventData) => {
+        // Example handler for CUSTOM_FILTER_ADDED, could be expanded or made more specific
+        if (eventData?.type === EVENTS.CUSTOM_FILTER_ADDED && eventData.payload) {
+            const { filterKey, filterConfig } = eventData.payload;
+             if (filterKey && filterConfig) {
+                this.addCustomFilter(filterKey, filterConfig, false); // false: already an event
+            }
+        }
+        // Add similar handling for REMOVED, UPDATED if they are separate events or check type.
+    };
+    this._boundHandleResetAllFilters = this.resetAllFilters.bind(this);
   }
 
-  /**
-   * التهيئة التلقائية
-   * @private
-   */
   _initialize() {
     try {
-      // الحصول على العناصر من الـ DOM
       this.canvasElement = DOMElements.getCanvasElement();
       this.filterSelectElement = DOMElements.getFilterSelectElement();
-      
+
       if (!this.canvasElement || !this.filterSelectElement) {
-        this.errorLogger.logWarning({
-          message: this.localizationService.translate('VideoFilterApplier.MissingDOMElements'),
-          origin: 'VideoFilterApplier._initialize'
+        this.errorLogger.logError({ // Elevate to error if essential UI is missing
+          message: this.localizationService.translate('VideoFilterApplier.MissingDOMElementsOnInit'),
+          origin: 'VideoFilterApplier._initialize',
+          isCritical: true
         });
+        // Module might be non-functional without these.
+        // Consider setting a flag to prevent operations if they are critical.
         return;
       }
-      
-      // ملء قائمة الفلاتر
+
       this.populateFilterSelect();
-      
-      // إعداد مراقبة الأحداث
-      this.setupEventListeners();
-      
-      // التحقق من حالة المشروع
+      this._setupEventListeners();
+
       const currentState = this.stateStore.getState();
-      if (currentState?.currentProject?.videoComposition?.videoFilter) {
-        this.applyFilter(currentState.currentProject.videoComposition.videoFilter);
-        this.updateFilterSelectUI(currentState.currentProject.videoComposition.videoFilter);
+      const initialFilterKey = currentState?.currentProject?.videoComposition?.videoFilter;
+
+      if (initialFilterKey && this.isFilterSupported(initialFilterKey)) {
+        this.applyFilter(initialFilterKey);
+        // this.updateFilterSelectUI(initialFilterKey); // applyFilter should ensure state -> UI consistency
+      } else {
+        if (initialFilterKey) {
+            this.errorLogger.logWarning({
+                message: this.localizationService.translate('VideoFilterApplier.InitialFilterInvalid', { key: initialFilterKey }),
+                origin: 'VideoFilterApplier._initialize'
+            });
+        }
+        this.applyFilter(DEFAULT_FILTER_KEY);
+        // this.updateFilterSelectUI(DEFAULT_FILTER_KEY);
       }
-      
-      this.eventAggregator.publish(EVENTS.VIDEO_FILTER_MODULE_READY, {
-        timestamp: Date.now()
-      });
+
+      this.eventAggregator.publish(EVENTS.VIDEO_FILTER_MODULE_READY, { timestamp: Date.now() });
+      this.errorLogger.logInfo({ message: 'VideoFilterApplier initialized successfully.', origin: 'VideoFilterApplier._initialize'});
+
     } catch (error) {
       this.errorLogger.handleError(error, {
         message: this.localizationService.translate('VideoFilterApplier.InitializationFailed'),
-        origin: 'VideoFilterApplier._initialize'
+        origin: 'VideoFilterApplier._initialize',
+        isCritical: true
       });
     }
   }
 
   /**
-   * تطبيق فلتر على الكانفاس
-   * @param {string} filterKey - مفتاح الفلتر
+   * Applies a filter to the main canvas element and updates the application state.
+   * @param {string} filterKey - The key of the filter to apply.
    */
   applyFilter(filterKey) {
-    const logger = this.errorLogger;
-    
     if (!this.canvasElement) {
-      logger.logWarning({
+      this.errorLogger.logWarning({
         message: this.localizationService.translate('VideoFilterApplier.CanvasNotReady'),
         origin: 'VideoFilterApplier.applyFilter'
       });
       return;
     }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilter'
-      });
-      return;
+
+    const effectiveFilterKey = this.isFilterSupported(filterKey) ? filterKey : DEFAULT_FILTER_KEY;
+    if (filterKey !== effectiveFilterKey) {
+         this.errorLogger.logWarning({
+            message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKeyFallback', { key: filterKey, fallback: effectiveFilterKey }),
+            origin: 'VideoFilterApplier.applyFilter'
+        });
     }
-    
-    // تطبيق الفلتر
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    
-    // نشر الحدث
+
+    const filterConfig = SUPPORTED_VIDEO_FILTERS[effectiveFilterKey];
+    this.canvasElement.style.filter = filterConfig.value || 'none';
+
+    // Dispatch action to update state only if it's different
+    const currentAppState = this.stateStore.getState();
+    if (currentAppState?.currentProject?.videoComposition?.videoFilter !== effectiveFilterKey) {
+        this.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, {
+            videoComposition: { videoFilter: effectiveFilterKey }
+        });
+    } else {
+        // If filter is the same, still ensure UI is sync (e.g., if populated after state was set)
+        this.updateFilterSelectUI(effectiveFilterKey);
+    }
+
+
     this.eventAggregator.publish(EVENTS.VIDEO_FILTER_APPLIED, {
-      filterKey,
-      filterValue: SUPPORTED_VIDEO_FILTERS[filterKey].value,
+      filterKey: effectiveFilterKey,
+      filterValue: filterConfig.value,
       timestamp: Date.now()
     });
   }
 
   /**
-   * تحديث واجهة المستخدم لتحديد الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
+   * Applies the filter currently defined in the application state.
+   * Typically used on initialization or after external state changes.
+   */
+  applyCurrentFilterFromState() {
+    const currentState = this.stateStore.getState();
+    const currentFilterKey = currentState?.currentProject?.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
+    this.applyFilter(currentFilterKey); // applyFilter handles validation and UI update via state subscription
+  }
+
+  /**
+   * Updates the filter selection dropdown to match the given filter key.
+   * @param {string} filterKey - The filter key to select in the dropdown.
    */
   updateFilterSelectUI(filterKey) {
-    const logger = this.errorLogger;
-    
     if (!this.filterSelectElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.updateFilterSelectUI'
-      });
+      // Warning already logged during _initialize if missing
       return;
     }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      filterKey = 'none';
-    }
-    
-    if (this.filterSelectElement.value !== filterKey) {
-      this.filterSelectElement.value = filterKey;
-      
-      // نشر الحدث
+    const effectiveKey = this.isFilterSupported(filterKey) ? filterKey : DEFAULT_FILTER_KEY;
+
+    if (this.filterSelectElement.value !== effectiveKey) {
+      this.filterSelectElement.value = effectiveKey;
+      // Event for UI updates could be useful for testing or other modules.
       this.eventAggregator.publish(EVENTS.UI_ELEMENT_UPDATED, {
-        element: 'videoFilterSelect',
-        value: filterKey,
+        elementId: this.filterSelectElement.id || 'videoFilterSelect', // Use ID if available
+        value: effectiveKey,
         timestamp: Date.now()
       });
     }
   }
 
   /**
-   * التعامل مع تغيير الفلتر من القائمة
-   * @param {Event} event - حدث تغيير الفلتر
+   * Handles changes from the filter selection dropdown.
+   * @param {Event} event - The change event from the select element.
    */
   handleFilterSelectionChange(event) {
-    const logger = this.errorLogger || console;
-    const selectEl = this.filterSelectElement;
-    
-    if (!selectEl) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.handleFilterSelectionChange'
-      });
+    if (!event?.target) {
+      this.errorLogger.logWarning({ message: 'Filter selection change event missing target.', origin: 'VideoFilterApplier.handleFilterSelectionChange'});
       return;
     }
-    
-    const selectedFilterKey = selectEl.value;
-    
-    if (!SUPPORTED_VIDEO_FILTERS[selectedFilterKey]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.UnsupportedFilterSelected'),
-        origin: 'VideoFilterApplier.handleFilterSelectionChange'
-      });
-      return;
-    }
-    
-    // تحديث الحالة
-    this.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { 
-      videoComposition: { videoFilter: selectedFilterKey }
-    });
-    
-    // تطبيق الفلتر
-    this.applyFilter(selectedFilterKey);
-    
-    // تسجيل التغيير
-    logger.logInfo({
-      message: this.localizationService.translate('VideoFilterApplier.FilterApplied', { filter: selectedFilterKey }),
+    const selectedFilterKey = /** @type {HTMLSelectElement} */ (event.target).value;
+    this.applyFilter(selectedFilterKey); // This will handle validation and state update
+    // Log after applyFilter handles potential fallbacks
+    const appliedFilterKey = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
+
+    this.errorLogger.logInfo({
+      message: this.localizationService.translate('VideoFilterApplier.FilterAppliedViaUI', { filter: appliedFilterKey }),
       origin: 'VideoFilterApplier.handleFilterSelectionChange'
     });
   }
 
   /**
-   * ملء قائمة الفلاتر في الواجهة
+   * Populates the filter selection dropdown with available filters.
    */
   populateFilterSelect() {
-    const logger = this.errorLogger || console;
-    
     if (!this.filterSelectElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.populateFilterSelect'
-      });
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissingOnPopulate'), origin: 'VideoFilterApplier.populateFilterSelect' });
       return;
     }
-    
-    // مسح الخيارات الحالية
-    this.filterSelectElement.innerHTML = '';
-    
-    // إضافة خيارات الفلاتر
-    Object.entries(SUPPORTED_VIDEO_FILTERS).forEach(([key, filter]) => {
+
+    this.filterSelectElement.innerHTML = ''; // Clear existing options
+
+    Object.entries(SUPPORTED_VIDEO_FILTERS).forEach(([key, config]) => {
       const option = document.createElement('option');
       option.value = key;
-      option.textContent = filter.name;
+      option.textContent = config.name || key; // Fallback to key if name is missing
       this.filterSelectElement.appendChild(option);
     });
-    
-    // إعداد مراقبة الحالة
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    this.updateFilterSelectUI(currentFilter);
-    
-    logger.logInfo({
-      message: this.localizationService.translate('VideoFilterApplier.FiltersPopulated'),
-      origin: 'VideoFilterApplier.populateFilterSelect'
-    });
+
+    const currentFilterKey = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
+    this.updateFilterSelectUI(currentFilterKey);
+
+    this.eventAggregator.publish(EVENTS.FILTER_POPULATED, { count: Object.keys(SUPPORTED_VIDEO_FILTERS).length, timestamp: Date.now() });
   }
 
   /**
-   * إعداد مراقبة الأحداث
+   * Handles state changes from the state store.
+   * @param {Object} newState - The new application state.
+   * @param {Object} oldState - The previous application state.
    */
-  setupEventListeners() {
-    if (!this.canvasElement || !this.filterSelectElement) return;
-    
-    // مراقبة تغيير الفلتر
-    this.filterSelectElement.addEventListener('change', this.handleFilterSelectionChange.bind(this));
-    
-    // مراقبة تغيير الحالة
-    this.unsubscribeState = this.stateStore.subscribe((newState, oldState) => {
-      if (!oldState || 
-          newState.currentProject?.videoComposition?.videoFilter !== 
-          oldState.currentProject?.videoComposition?.videoFilter) {
-        this.applyCurrentFilter();
+  _onStateChange(newState, oldState) {
+    const newFilterKey = newState?.currentProject?.videoComposition?.videoFilter;
+    const oldFilterKey = oldState?.currentProject?.videoComposition?.videoFilter;
+
+    if (newFilterKey !== oldFilterKey) {
+      // If the state attempts to set an unsupported filter directly, log it and apply default.
+      const effectiveKey = this.isFilterSupported(newFilterKey) ? newFilterKey : DEFAULT_FILTER_KEY;
+      if (newFilterKey && newFilterKey !== effectiveKey) {
+        this.errorLogger.logWarning({
+          message: this.localizationService.translate('VideoFilterApplier.InvalidFilterInState', { key: newFilterKey, fallback: effectiveKey }),
+          origin: 'VideoFilterApplier._onStateChange'
+        });
+        // If state was forced to an invalid filter, dispatch correction? Or let applyFilter handle it?
+        // Current applyFilter updates state if different, so this creates a loop if state has truly invalid value.
+        // Solution: only call applyFilter if *our derived effectiveKey* is different from actual visual.
       }
-    });
-    
-    // مراقبة الأحداث من المؤقت
-    eventAggregator.subscribe(EVENTS.TIMELINE_TIME_CHANGED, this.handleFilterSeek.bind(this));
-    eventAggregator.subscribe(EVENTS.FILTER_APPLY_REQUESTED, (data) => {
-      if (data.filterKey && SUPPORTED_VIDEO_FILTERS[data.filterKey]) {
-        this.applyFilter(data.filterKey);
+      
+      // Apply if visually different from new state, or if state changes to valid, supported key.
+      const visuallyAppliedFilterValue = this.canvasElement ? this.canvasElement.style.filter : 'none';
+      const targetFilterValue = SUPPORTED_VIDEO_FILTERS[effectiveKey]?.value || 'none';
+      
+      if(visuallyAppliedFilterValue !== targetFilterValue) {
+          this.applyFilter(effectiveKey); // applyFilter will reconcile stateStore if needed
       }
-    });
-    
-    // مراقبة الأحداث من الزر
-    eventAggregator.subscribe(EVENTS.PLAY_BUTTON_CLICKED, this.handleFilterPlay.bind(this));
-    eventAggregator.subscribe(EVENTS.PAUSE_BUTTON_CLICKED, this.handleFilterStop.bind(this));
-    eventAggregator.subscribe(EVENTS.RESET_BUTTON_CLICKED, this.resetAllFilters.bind(this));
-    eventAggregator.subscribe(EVENTS.CUSTOM_FILTER_ADDED, (data) => {
-      if (data.filterKey && data.filterConfig) {
-        this.addCustomFilter(data.filterKey, data.filterConfig);
-      }
-    });
+      this.updateFilterSelectUI(effectiveKey); // Always ensure UI is in sync with effective state
+    }
   }
 
-  /**
-   * إزالة مراقبة الأحداث
-   */
-  teardownEventListeners() {
+  _setupEventListeners() {
     if (this.filterSelectElement) {
-      this.filterSelectElement.removeEventListener('change', this.handleFilterSelectionChange);
+      this.filterSelectElement.addEventListener('change', this._boundHandleFilterSelectionChange);
+    } else {
+        this.errorLogger.logError({ message: 'Filter select element not available for event listener setup.', origin: 'VideoFilterApplier._setupEventListeners'});
     }
-    
-    if (this.canvasElement) {
-      this.canvasElement.style.filter = 'none';
-      this.canvasElement.style.animation = '';
-      this.canvasElement.style.transition = '';
+
+    if (this.stateStore && typeof this.stateStore.subscribe === 'function') {
+      this._unsubscribeState = this.stateStore.subscribe(this._boundHandleStateChange);
+    } else {
+        this.errorLogger.logError({ message: 'StateStore not available for subscription.', origin: 'VideoFilterApplier._setupEventListeners'});
     }
-    
-    // إزالة اشتراك الحالة
-    if (this.unsubscribeState) {
-      this.unsubscribeState();
-    }
-    
-    // إزالة اشتراك الأحداث
-    eventAggregator.unsubscribe(EVENTS.TIMELINE_TIME_CHANGED, this.handleFilterSeek);
-    eventAggregator.unsubscribe(EVENTS.FILTER_APPLY_REQUESTED, (data) => {
-      if (data.filterKey && SUPPORTED_VIDEO_FILTERS[data.filterKey]) {
-        this.applyFilter(data.filterKey);
-      }
-    });
-    
-    eventAggregator.unsubscribe(EVENTS.PLAY_BUTTON_CLICKED, this.handleFilterPlay);
-    eventAggregator.unsubscribe(EVENTS.PAUSE_BUTTON_CLICKED, this.handleFilterStop);
-    eventAggregator.unsubscribe(EVENTS.RESET_BUTTON_CLICKED, this.resetAllFilters);
-    eventAggregator.unsubscribe(EVENTS.CUSTOM_FILTER_ADDED, (data) => {
-      if (data.filterKey && data.filterConfig) {
-        this.addCustomFilter(data.filterKey, data.filterConfig);
-      }
-    });
+
+    // Event Aggregator subscriptions
+    this.eventAggregator.subscribe(EVENTS.TIMELINE_TIME_CHANGED, this._boundHandleFilterSeek);
+    this.eventAggregator.subscribe(EVENTS.FILTER_APPLY_REQUESTED, this._boundHandleFilterApplyRequested);
+    this.eventAggregator.subscribe(EVENTS.CUSTOM_FILTER_ADDED, this._boundHandleCustomFilterEvent); // More generic or split if needed
+    // Add listeners for CUSTOM_FILTER_REMOVED, CUSTOM_FILTER_UPDATED if they directly affect this module's list.
+    // this.eventAggregator.subscribe(EVENTS.PLAY_BUTTON_CLICKED, boundHandlerForPlay);
+    // this.eventAggregator.subscribe(EVENTS.PAUSE_BUTTON_CLICKED, boundHandlerForPause);
+    this.eventAggregator.subscribe(EVENTS.RESET_BUTTON_CLICKED, this._boundHandleResetAllFilters);
   }
 
-  /**
-   * إعادة تعيين الفلتر إلى القيم الافتراضية
-   */
+  _teardownEventListeners() {
+    if (this.filterSelectElement) {
+      this.filterSelectElement.removeEventListener('change', this._boundHandleFilterSelectionChange);
+    }
+
+    if (this._unsubscribeState) {
+      this._unsubscribeState();
+      this._unsubscribeState = null;
+    }
+
+    this.eventAggregator.unsubscribe(EVENTS.TIMELINE_TIME_CHANGED, this._boundHandleFilterSeek);
+    this.eventAggregator.unsubscribe(EVENTS.FILTER_APPLY_REQUESTED, this._boundHandleFilterApplyRequested);
+    this.eventAggregator.unsubscribe(EVENTS.CUSTOM_FILTER_ADDED, this._boundHandleCustomFilterEvent);
+    this.eventAggregator.unsubscribe(EVENTS.RESET_BUTTON_CLICKED, this._boundHandleResetAllFilters);
+  }
+
+  /** Resets the main canvas filter to 'none' and updates state. */
   resetFilter() {
     if (this.canvasElement) {
       this.canvasElement.style.filter = 'none';
-      this.canvasElement.style.webkitFilter = 'none';
-      this.canvasElement.style.mozFilter = 'none';
-      this.canvasElement.style.msFilter = 'none';
-      this.canvasElement.style.oFilter = 'none';
-      this.canvasElement.style.animation = '';
-      this.canvasElement.style.webkitAnimation = '';
-      this.canvasElement.style.mozAnimation = '';
-      this.canvasElement.style.msAnimation = '';
-      this.canvasElement.style.oAnimation = '';
+      this.canvasElement.style.animation = ''; // Clear any active animations
+      this.canvasElement.style.transition = ''; // Clear any active transitions
     }
-    
-    // تحديث الحالة
-    this.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { 
-      videoComposition: { videoFilter: 'none' }
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RESET, {
-      timestamp: Date.now()
-    });
+    this.applyFilter(DEFAULT_FILTER_KEY); // Ensures state consistency and UI updates
+    this.eventAggregator.publish(EVENTS.FILTER_RESET, { timestamp: Date.now() });
   }
 
-  /**
-   * تنظيف الموارد
-   */
+  /** Resets all filters (currently implies resetting the main filter). */
+  resetAllFilters() {
+    this.resetFilter(); // Currently, only one primary filter is managed.
+    this.eventAggregator.publish(EVENTS.ALL_FILTERS_RESET, { timestamp: Date.now() });
+  }
+
+  /** Cleans up resources used by the module. */
   cleanup() {
-    // إزالة عناصر الفلتر
+    this._teardownEventListeners();
+    
+    this._durationTimers.forEach(timerObj => {
+      clearTimeout(timerObj.startTimeTimeout);
+      if (timerObj.durationEndTimeout) clearTimeout(timerObj.durationEndTimeout);
+    });
+    this._durationTimers = [];
+
+    if (this.canvasElement) {
+        // Reset styles if desired upon cleanup
+        this.canvasElement.style.filter = 'none';
+        this.canvasElement.style.animation = '';
+        this.canvasElement.style.opacity = '1';
+        this.canvasElement.style.transform = '';
+        this.canvasElement.style.mixBlendMode = 'normal';
+    }
+    
     this.canvasElement = null;
     this.filterSelectElement = null;
-    
-    // إزالة الإشارات
-    if (this.filterSelectRef) {
-      this.filterSelectRef = null;
-    }
-    
-    if (this.canvasRef) {
-      this.canvasRef = null;
-    }
-    
-    // إزالة المؤقتات
-    durationTimers.forEach(timer => clearTimeout(timer.timer));
-    durationTimers = [];
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_CLEANED_UP, {
-      timestamp: Date.now()
-    });
+
+    this.errorLogger.logInfo({ message: 'VideoFilterApplier cleaned up.', origin: 'VideoFilterApplier.cleanup'});
+    this.eventAggregator.publish(EVENTS.FILTER_CLEANED_UP, { timestamp: Date.now() });
   }
 
   /**
-   * التحقق من صحة الفلتر
-   * @returns {boolean} هل الفلتر مدعوم؟
+   * Checks if a filter key is present in the list of supported filters.
+   * @param {string} filterKey - The key of the filter.
+   * @returns {boolean} True if the filter is supported.
    */
   isFilterSupported(filterKey) {
-    return !!SUPPORTED_VIDEO_FILTERS[filterKey];
+    return filterKey && SUPPORTED_VIDEO_FILTERS.hasOwnProperty(filterKey);
   }
 
-  /**
-   * التحقق من حالة الفلتر الحالي
-   * @returns {FilterState} الحالة الحالية للفلتر
-   */
-  getCurrentState() {
-    const computedStyle = window.getComputedStyle(this.canvasElement);
-    const currentState = this.stateStore.getState();
-    const filterKey = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    const filter = SUPPORTED_VIDEO_FILTERS[filterKey] || SUPPORTED_VIDEO_FILTERS.none;
-    
-    return {
-      filterKey,
-      ...filter,
-      isActive: filterKey !== 'none',
-      filterValue: computedStyle.filter || 'none',
-      isAnimated: computedStyle.animationPlayState === 'running',
-      isTainted: computedStyle.filter !== 'none',
-      timestamp: Date.now()
-    };
-  }
-
-  /**
-   * التحقق مما إذا كان الفلتر قيد التشغيل
-   * @returns {boolean} هل الفلتر قيد التشغيل؟
-   */
-  isFilterPlaying() {
-    if (!this.canvasElement) return false;
-    
-    const computedStyle = window.getComputedStyle(this.canvasElement);
-    return computedStyle.animationPlayState === 'running';
-  }
-
-  /**
-   * التحقق من حالة المشروع
-   * @returns {boolean} هل المشروع جاهز؟
-   */
+  /** Checks if the project state is considered ready. */
   isProjectReady() {
-    const currentState = this.stateStore.getState();
-    return !!currentState.currentProject && !!this.canvasElement && !!this.filterSelectElement;
+    return !!this.stateStore.getState()?.currentProject;
   }
 
-  /**
-   * التحقق من استعداد العناصر
-   * @returns {boolean} هل العناصر جاهزة؟
-   */
+  /** Checks if essential DOM elements are available. */
   areElementsReady() {
     return !!this.canvasElement && !!this.filterSelectElement;
   }
 
-  /**
-   * التحقق من دعم الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @returns {boolean} هل الفلتر مدعوم؟
-   */
-  isFilterAvailable(filterKey) {
-    return this.isProjectReady() && 
-           this.areElementsReady() && 
-           this.isFilterSupported(filterKey);
-  }
-
-  /**
-   * التحقق من حالة الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @returns {boolean} هل الفلتر جاهز للتطبيق؟
-   */
-  isFilterReadyForPlayback(filterKey) {
-    return this.isProjectReady() && 
-           this.areElementsReady() && 
-           this.isFilterSupported(filterKey);
-  }
-
-  /**
-   * التحقق من حالة الفلتر
-   * @returns {boolean} هل الفلتر جاهز؟
-   */
+  /** Checks if any filter (other than 'none') is visually applied. */
   isFilterActive() {
     if (!this.canvasElement) return false;
-    
+    const currentFilter = window.getComputedStyle(this.canvasElement).filter;
+    return currentFilter !== 'none' && currentFilter !== '';
+  }
+
+  /** Checks if a CSS animation is currently in the 'running' state on the canvas. */
+  isFilterAnimationPlaying() {
+    if (!this.canvasElement) return false;
+    return window.getComputedStyle(this.canvasElement).animationPlayState === 'running';
+  }
+
+  /**
+   * Retrieves the current visual state of the filter applied to the canvas.
+   * @returns {FilterState} The current filter state.
+   */
+  getCurrentState() {
+    if (!this.canvasElement || !this.stateStore || !this.localizationService) {
+        return {
+            error: "VideoFilterApplier not fully initialized.",
+            filterKey: DEFAULT_FILTER_KEY, filterValue: 'none', filterName: 'None', filterType: 'color',
+            filterIntensity: 0, isActive: false, isAnimated: false, animationProgress: 0,
+            animationDuration: '0s', animationDelay: '0s', animationEasing: 'linear',
+            animationReverse: false, animationIterationCount: 1, animationDirection: 'normal',
+            animationRunning: false, animationName: 'none', isTainted: false, timestamp: Date.now()
+        };
+    }
     const computedStyle = window.getComputedStyle(this.canvasElement);
-    return computedStyle.filter !== 'none';
-  }
-
-  /**
-   * تطبيق الفلتر الحالي من الحالة
-   */
-  applyCurrentFilter() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      this.applyFilter('none');
-      return;
-    }
-    
-    // تطبيق الفلتر
-    this.applyFilter(currentFilter);
-    
-    // تحديث واجهة المستخدم
-    this.updateFilterSelectUI(currentFilter);
-  }
-
-  /**
-   * إعادة تعيين جميع الفلاتر
-   */
-  resetAllFilters() {
-    this.resetFilter();
-    
-    // تحديث واجهة المستخدم
-    this.updateFilterSelectUI('none');
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.ALL_FILTERS_RESET, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تبديل الفلتر
-   */
-  toggleFilter() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    // تبديل الفلتر بين 'none' و 'grayscale'
-    const newFilter = currentFilter === 'none' ? 'grayscale' : 'none';
-    this.applyFilter(newFilter);
-    this.updateFilterSelectUI(newFilter);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_TOGGLED, {
-      previousFilter: currentFilter,
-      newFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الخلفية
-   */
-  applyFilterToBackground() {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const backgroundType = currentState?.currentProject?.background?.type;
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!backgroundType) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.BackgroundNotSet'),
-        origin: 'VideoFilterApplier.applyFilterToBackground'
-      });
-      return;
-    }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[currentFilter]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilterToBackground'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على الخلفية
-    const backgroundElement = document.querySelector('.background-element');
-    if (backgroundElement) {
-      backgroundElement.style.filter = SUPPORTED_VIDEO_FILTERS[currentFilter].value || 'none';
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_BACKGROUND, {
-        filterKey: currentFilter,
-        timestamp: Date.now()
-      });
-    }
-  }
-
-  /**
-   * تطبيق الفلتر على النصوص
-   */
-  applyFilterToText() {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const textStyle = currentState?.currentProject?.textStyle;
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!textStyle) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.TextStyleNotSet'),
-        origin: 'VideoFilterApplier.applyFilterToText'
-      });
-      return;
-    }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[currentFilter]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilterToText'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على النصوص
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[currentFilter].value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TEXT, {
-      filterKey: currentFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الصوت
-   */
-  applyFilterToAudio() {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const audioFilters = {
-      'invert': 'invert(100%)',
-      'grayscale': 'grayscale(100%)',
-      'sepia': 'sepia(100%)',
-      'none': 'none'
-    };
-    
-    const filterKey = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    const filterValue = audioFilters[filterKey] || 'none';
-    
-    // البحث عن عنصر الصوت
-    const audioElement = document.querySelector('audio#main-audio');
-    if (audioElement) {
-      audioElement.style.filter = filterValue;
-      
-      logger.logInfo({
-        message: this.localizationService.translate('VideoFilterApplier.FilterAppliedToAudio', { filter: filterKey }),
-        origin: 'VideoFilterApplier.applyFilterToAudio'
-      });
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_AUDIO, {
-        filterKey,
-        timestamp: Date.now()
-      });
-    } else {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.AudioElementNotFound'),
-        origin: 'VideoFilterApplier.applyFilterToAudio'
-      });
-    }
-  }
-
-  /**
-   * تطبيق الفلتر على محتوى الذكاء الاصطناعي
-   */
-  applyFilterToAIContent() {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const aiContent = currentState?.aiContent;
-    
-    if (!aiContent || !aiContent.enabled) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.AIContentNotEnabled'),
-        origin: 'VideoFilterApplier.applyFilterToAIContent'
-      });
-      return;
-    }
-    
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!SUPPORTED_VIDEO_FILTERS[currentFilter]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilterToAIContent'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على محتوى الذكاء الاصطناعي
-    const aiElements = document.querySelectorAll('.ai-content');
-    aiElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[currentFilter].value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_AI_CONTENT, {
-      filterKey: currentFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على المؤقت
-   */
-  applyFilterToTimeline() {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const timelineElement = document.querySelector('.timeline');
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!SUPPORTED_VIDEO_FILTERS[currentFilter]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilterToTimeline'
-      });
-      return;
-    }
-    
-    if (timelineElement) {
-      timelineElement.style.filter = SUPPORTED_VIDEO_FILTERS[currentFilter].value || 'none';
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TIMELINE, {
-        filterKey: currentFilter,
-        timestamp: Date.now()
-      });
-    } else {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.TimelineElementMissing'),
-        origin: 'VideoFilterApplier.applyFilterToTimeline'
-      });
-    }
-  }
-
-  /**
-   * تطبيق الفلتر عند التصدير
-   */
-  applyFilterToExport() {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const exportSettings = currentState?.currentProject?.exportSettings;
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!exportSettings) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.ExportSettingsMissing'),
-        origin: 'VideoFilterApplier.applyFilterToExport'
-      });
-      return;
-    }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[currentFilter]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilterToExport'
-      });
-      return;
-    }
-    
-    // تحديث إعدادات التصدير
-    this.stateStore.dispatch(ACTIONS.UPDATE_EXPORT_SETTINGS, {
-      videoFilter: currentFilter
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_EXPORT, {
-      filterKey: currentFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على جميع العناصر
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToAll(filterKey) {
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilterToAll'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على الكانفاس
-    if (this.canvasElement) {
-      this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    }
-    
-    // تطبيق الفلتر على النصوص
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    });
-    
-    // تطبيق الفلتر على الخلفية
-    const backgroundElements = document.querySelectorAll('.background-element');
-    backgroundElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_ALL, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على العناصر المحددة
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToSelected(filterKey) {
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilterToSelected'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على العناصر المحددة فقط
-    const selectedElements = document.querySelectorAll('.selected-element');
-    selectedElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_SELECTED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق فلتر مع انتقال
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} transition - نوع الانتقال
-   */
-  applyFilterWithTransition(filterKey, transition = 'fade') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    const transitionClass = `filter-transition-${filterKey}-${transition}`;
-    if (this.canvasElement) {
-      this.canvasElement.classList.add(transitionClass);
-      
-      // إزالة الفئة بعد الانتهاء
-      setTimeout(() => {
-        this.canvasElement.classList.remove(transitionClass);
-        
-        // نشر الحدث
-        this.eventAggregator.publish(EVENTS.FILTER_TRANSITION_COMPLETED, {
-          filterKey,
-          transition,
-          timestamp: Date.now()
-        });
-      }, 500); // مدة الانتقال الافتراضية
-    }
-  }
-
-  /**
-   * تطبيق فلتر مع حركة
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} animation - نوع الحركة
-   */
-  applyFilterWithAnimation(filterKey, animation = 'fadeIn') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    if (this.canvasElement) {
-      this.canvasElement.classList.add(`filter-animation-${filterKey}-${animation}`);
-      
-      // إزالة الفئة بعد الانتهاء
-      this.canvasElement.addEventListener('animationend', onAnimationEnd = () => {
-        this.canvasElement.classList.remove(`filter-animation-${filterKey}-${animation}`);
-        this.canvasElement.removeEventListener('animationend', onAnimationEnd);
-        
-        // نشر الحدث
-        this.eventAggregator.publish(EVENTS.FILTER_ANIMATION_COMPLETED, {
-          filterKey,
-          animation,
-          timestamp: Date.now()
-        });
-      });
-    }
-  }
-
-  /**
-   * تطبيق فلتر بين زمنين
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {number} startTime - الزمن الابتدائي
-   * @param {number} endTime - الزمن النهائي
-   */
-  applyFilterWithDurationRange(filterKey, startTime, endTime) {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-      return;
-    }
-    
-    const duration = endTime - startTime;
-    if (duration <= 0) return;
-    
-    // تطبيق الفلتر عند الزمن الابتدائي
-    const timer = setTimeout(() => {
-      if (this.canvasElement) {
-        this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-        
-        // إزالة الفلتر بعد انتهاء المدة
-        const endTimer = setTimeout(() => {
-          this.canvasElement.style.filter = 'none';
-          clearTimeout(timer);
-          clearTimeout(endTimer);
-        }, duration);
-        
-        // تخزين المؤقتات
-        durationTimers.push({ timer, endTimer });
-      }
-    }, startTime);
-  }
-
-  /**
-   * تطبيق الفلتر تحت شرط معين
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب أن يتحقق
-   */
-  applyFilterIf(filterKey, condition) {
-    if (typeof condition !== 'function') return;
-    
-    if (condition()) {
-      this.applyFilter(filterKey);
-    }
-  }
-
-  /**
-   * تطبيق الفلتر إلا إذا تحقق شرط معين
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب ألا يتحقق
-   */
-  applyFilterUnless(filterKey, condition) {
-    if (typeof condition !== 'function') return;
-    
-    if (!condition()) {
-      this.applyFilter(filterKey);
-    }
-  }
-
-  /**
-   * التحقق من صحة الملف الشخصي
-   * @returns {boolean} هل التحقق ناجح؟
-   */
-  selfTest() {
-    try {
-      const currentState = this.getCurrentState();
-      const testCanvas = document.createElement('canvas');
-      const testContext = testCanvas.getContext('2d');
-      
-      // التحقق من دعم الفلتر
-      const supportedFilters = Object.keys(SUPPORTED_VIDEO_FILTERS);
-      const hasSupportedFilters = supportedFilters.some(key => {
-        const filter = SUPPORTED_VIDEO_FILTERS[key];
-        return filter && filter.value;
-      });
-      
-      return hasSupportedFilters && currentState.isTainted !== undefined;
-    } catch (e) {
-      this.errorLogger.handleError(e, {
-        message: this.localizationService.translate('VideoFilterApplier.SelfTestFailed'),
-        origin: 'VideoFilterApplier.selfTest'
-      });
-      return false;
-    }
-  }
-
-  /**
-   * إعداد مراقبة الأحداث
-   */
-  setupEventListeners() {
-    if (!this.canvasElement || !this.filterSelectElement) return;
-    
-    // مراقبة تغيير الفلتر
-    this.filterSelectElement.addEventListener('change', this.handleFilterSelectionChange.bind(this));
-    
-    // مراقبة تغيير الحالة
-    this.unsubscribeState = this.stateStore.subscribe((newState, oldState) => {
-      if (!oldState || 
-          newState.currentProject?.videoComposition?.videoFilter !== 
-          oldState.currentProject?.videoComposition?.videoFilter) {
-        this.applyCurrentFilter();
-      }
-    });
-    
-    // مراقبة الأحداث من المؤقت
-    eventAggregator.subscribe(EVENTS.TIMELINE_TIME_CHANGED, this.handleFilterSeek.bind(this));
-    eventAggregator.subscribe(EVENTS.FILTER_APPLY_REQUESTED, (data) => {
-      if (data.filterKey && this.isFilterSupported(data.filterKey)) {
-        this.applyFilter(data.filterKey);
-      }
-    });
-    
-    // مراقبة الأحداث من الزر
-    eventAggregator.subscribe(EVENTS.PLAY_BUTTON_CLICKED, this.handleFilterPlay.bind(this));
-    eventAggregator.subscribe(EVENTS.PAUSE_BUTTON_CLICKED, this.handleFilterStop.bind(this));
-    eventAggregator.subscribe(EVENTS.RESET_BUTTON_CLICKED, this.resetAllFilters.bind(this));
-    eventAggregator.subscribe(EVENTS.CUSTOM_FILTER_ADDED, (data) => {
-      if (data.filterKey && data.filterConfig) {
-        this.addCustomFilter(data.filterKey, data.filterConfig);
-      }
-    });
-  }
-
-  /**
-   * التعامل مع تغيير حالة التشغيل
-   * @param {boolean} isPlaying - هل الفلتر قيد التشغيل؟
-   */
-  handleFilterPlaybackChange(isPlaying) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = isPlaying ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(
-      isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED,
-      {
-        timestamp: Date.now()
-      }
-    );
-  }
-
-  /**
-   * التعامل مع انتهاء الفلتر تمامًا
-   */
-  handleFilterFinish() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير انتهاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.3s ease-out';
-    this.canvasElement.style.filter = 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_FINISHED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع إلغاء الفلتر
-   */
-  handleFilterCancel() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير إلغاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.2s ease-in';
-    this.canvasElement.style.filter = 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_CANCELED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تحديث الفلتر
-   */
-  handleFilterUpdate() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.handleFilterUpdate'
-      });
-      return;
-    }
-    
-    // تحديث الفلتر
-    if (this.canvasElement) {
-      this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[currentFilter]?.value || 'none';
-    }
-    
-    // تحديث واجهة المستخدم
-    if (this.filterSelectElement) {
-      this.filterSelectElement.value = currentFilter;
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_UPDATED, {
-      filterKey: currentFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع إعادة تعيين الفلتر
-   */
-  handleFilterReset() {
-    // إعادة تعيين الفلتر إلى القيم الافتراضية
-    this.resetFilter();
-    
-    // تحديث واجهة المستخدم
-    this.updateFilterSelectUI('none');
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RESET, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تشغيل الفلتر
-   */
-  handleFilterPlay() {
-    if (!this.canvasElement) return;
-    
-    // تشغيل الفلتر
-    this.canvasElement.style.animationPlayState = 'running';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PLAYING, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع إيقاف الفلتر
-   */
-  handleFilterStop() {
-    if (!this.canvasElement) return;
-    
-    // إيقاف الفلتر
-    this.canvasElement.style.animationPlayState = 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_STOPPED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تحديد زمن الفلتر
-   * @param {number} time - الزمن المحدد
-   */
-  handleFilterSeek(time) {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.handleFilterSeek'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر عند الزمن المحدد
-    this.applyFilterWithDurationRange(currentFilter, time, time + 1000);
-  }
-
-  /**
-   * التعامل مع تغيير معدل الفلتر
-   * @param {number} playbackRate - معدل التشغيل
-   */
-  handleFilterRateChange(playbackRate) {
-    if (!this.canvasElement) return;
-    
-    // تحديث معدل التشغيل
-    this.canvasElement.style.animationDuration = `${1 / parseFloat(playbackRate)}s`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RATE_CHANGED, {
-      playbackRate,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير اتجاه الفلتر
-   * @param {string} direction - اتجاه الفلتر (normal أو reverse)
-   */
-  handleFilterDirectionChange(direction = 'normal') {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير حالة التشغيل
-   * @param {boolean} isPlaying - هل الفلتر قيد التشغيل؟
-   */
-  handleFilterPlayStateChange(isPlaying) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = isPlaying ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(
-      isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED,
-      {
-        timestamp: Date.now()
-      }
-    );
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDuration - الزمن الجديد
-   */
-  handleFilterDurationChange(newDuration) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDuration = `${newDuration}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DURATION_CHANGED, {
-      duration: newDuration,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير تقدم الحركة
-   * @param {number} progress - تقدم الحركة (0-1)
-   */
-  handleFilterProgressChange(progress) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تقدم الحركة
-    this.canvasElement.style.setProperty('--filter-progress', progress);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PROGRESS_CHANGED, {
-      progress,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير المقياس
-   * @param {number} scale - مقياس الفلتر (مثل 1.5، 0.7)
-   */
-  handleFilterScaleChange(scale) {
-    if (!this.canvasElement) return;
-    
-    // تحديث مقياس الفلتر
-    this.canvasElement.style.transform = `scale(${scale})`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_SCALE_CHANGED, {
-      scale,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير الدوران
-   * @param {number} rotation - الزاوية الجديدة
-   */
-  handleFilterRotationChange(rotation) {
-    if (!this.canvasElement) return;
-    
-    // تحديث الدوران
-    this.canvasElement.style.transform = `rotate(${rotation}deg)`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ROTATION_CHANGED, {
-      rotation,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير وضعية المزج
-   * @param {string} newBlendMode - وضعية المزج الجديدة
-   */
-  handleFilterBlendModeChange(newBlendMode) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وضعية المزج
-    this.canvasElement.style.mixBlendMode = newBlendMode || 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_BLEND_MODE_CHANGED, {
-      blendMode: newBlendMode,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير عدد التكرار
-   * @param {number} iterationCount - عدد التكرار الجديد
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير اتجاه الفلتر
-   * @param {string} direction - اتجاه الفلتر
-   */
-  handleFilterDirectionChange(direction) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDelay - الزمن الجديد
-   */
-  handleFilterDelayChange(newDelay) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDelay = `${newDelay}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DELAY_CHANGED, {
-      delay: newDelay,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير الشفافية
-   * @param {number} opacity - الشفافية الجديدة (0-1)
-   */
-  handleFilterOpacityChange(opacity = 1) {
-    if (!this.canvasElement) return;
-    
-    // تحديث الشفافية
-    this.canvasElement.style.opacity = opacity;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_OPACITY_CHANGED, {
-      opacity,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الانتقال
-   * @param {string} timing - وقت الانتقال
-   */
-  handleFilterTimingChange(timing) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وقت الانتقال
-    this.canvasElement.style.transitionTimingFunction = timing;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_TIMING_CHANGED, {
-      timing,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير اتجاه الفلتر
-   */
-  handleFilterDirectionChange() {
-    const currentState = this.stateStore.getState();
-    const direction = currentState?.currentProject?.videoComposition?.filterDirection || 'normal';
-    
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDuration - الزمن الجديد
-   */
-  handleFilterDurationChange(newDuration) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDuration = `${newDuration}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DURATION_CHANGED, {
-      duration: newDuration,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير تقدم الحركة
-   * @param {number} progress - تقدم الحركة (0-1)
-   */
-  handleFilterProgressChange(progress) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تقدم الحركة
-    this.canvasElement.style.setProperty('--filter-progress', progress);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PROGRESS_CHANGED, {
-      progress,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير المقياس
-   * @param {number} scale - المقياس الجديد (مثل 1.5، 0.7)
-   */
-  handleFilterScaleChange(scale) {
-    if (!this.canvasElement) return;
-    
-    // تحديث المقياس
-    this.canvasElement.style.transform = `scale(${scale})`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_SCALE_CHANGED, {
-      scale,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير الزاوية
-   * @param {number} rotation - الزاوية الجديدة
-   */
-  handleFilterRotationChange(rotation) {
-    if (!this.canvasElement) return;
-    
-    // تحديث الزاوية
-    this.canvasElement.style.transform = `rotate(${rotation}deg)`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ROTATION_CHANGED, {
-      rotation,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير وضعية المزج
-   * @param {string} newBlendMode - وضعية المزج الجديدة
-   */
-  handleFilterBlendModeChange(newBlendMode) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وضعية المزج
-    this.canvasElement.style.mixBlendMode = newBlendMode || 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_BLEND_MODE_CHANGED, {
-      blendMode: newBlendMode,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير عدد التكرار
-   * @param {number} iterationCount - عدد التكرار الجديد
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDuration - الزمن الجديد
-   */
-  handleFilterDurationChange(newDuration) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDuration = `${newDuration}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DURATION_CHANGED, {
-      duration: newDuration,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير تقدم الحركة
-   * @param {number} progress - تقدم الحركة (0-1)
-   */
-  handleFilterProgressChange(progress) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تقدم الحركة
-    this.canvasElement.style.setProperty('--filter-progress', progress);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PROGRESS_CHANGED, {
-      progress,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير المقياس
-   * @param {number} scale - المقياس الجديد (مثل 1.5، 0.7)
-   */
-  handleFilterScaleChange(scale) {
-    if (!this.canvasElement) return;
-    
-    // تحديث المقياس
-    this.canvasElement.style.transform = `scale(${scale})`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_SCALE_CHANGED, {
-      scale,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير الزاوية
-   * @param {number} rotation - الزاوية الجديدة
-   */
-  handleFilterRotationChange(rotation) {
-    if (!this.canvasElement) return;
-    
-    // تحديث الزاوية
-    this.canvasElement.style.transform = `rotate(${rotation}deg)`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ROTATION_CHANGED, {
-      rotation,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير وضعية المزج
-   * @param {string} newBlendMode - وضعية المزج الجديدة
-   */
-  handleFilterBlendModeChange(newBlendMode) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وضعية المزج
-    this.canvasElement.style.mixBlendMode = newBlendMode || 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_BLEND_MODE_CHANGED, {
-      blendMode: newBlendMode,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير عدد التكرار
-   * @param {number} iterationCount - عدد التكرار الجديد
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * إضافة فلتر مخصص
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Object} filterConfig - تكوين الفلتر
-   */
-  addCustomFilter(filterKey, filterConfig) {
-    if (!filterKey || !filterConfig || !filterConfig.name || !filterConfig.value) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidCustomFilterConfig'),
-        origin: 'VideoFilterApplier.addCustomFilter'
-      });
-      return;
-    }
-    
-    // إضافة الفلتر إلى القائمة المدعومة
-    SUPPORTED_VIDEO_FILTERS[filterKey] = filterConfig;
-    
-    // تحديث قائمة الفلاتر في الواجهة
-    const option = document.createElement('option');
-    option.value = filterKey;
-    option.textContent = filterConfig.name;
-    this.filterSelectElement.appendChild(option);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_ADDED, {
-      filterKey,
-      filterConfig,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * إزالة فلتر مخصص
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  removeCustomFilter(filterKey) {
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.UnplayableFilter', { filter: filterKey }),
-        origin: 'VideoFilterApplier.removeCustomFilter'
-      });
-      return;
-    }
-    
-    // إزالة الفلتر من القائمة المدعومة
-    delete SUPPORTED_VIDEO_FILTERS[filterKey];
-    
-    // إزالة الفلتر من واجهة المستخدم
-    const option = this.filterSelectElement.querySelector(`option[value="${filterKey}"]`);
-    if (option) {
-      option.remove();
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_REMOVED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تحديث فلتر مخصص
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Object} newConfig - التكوين الجديد
-   */
-  updateCustomFilter(filterKey, newConfig) {
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.UnplayableFilter', { filter: filterKey }),
-        origin: 'VideoFilterApplier.updateCustomFilter'
-      });
-      return;
-    }
-    
-    // تحديث الفلتر
-    const option = this.filterSelectElement.querySelector(`option[value="${filterKey}"]`);
-    if (option) {
-      option.textContent = newConfig.name;
-    }
-    
-    // تحديث التكوين
-    SUPPORTED_VIDEO_FILTERS[filterKey] = {
-      ...SUPPORTED_VIDEO_FILTERS[filterKey],
-      ...newConfig
-    };
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_UPDATED, {
-      filterKey,
-      newConfig,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تحديث شدة الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {number} intensity - شدة الفلتر (0-1)
-   */
-  updateFilterIntensity(filterKey, intensity = 0) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تحديث شدة الفلتر
-    const filter = SUPPORTED_VIDEO_FILTERS[filterKey];
-    if (filter.type === 'color') {
-      const numericValue = parseFloat(filter.value);
-      const newValue = `${filter.name}(${numericValue * intensity}%)`;
-      filter.value = newValue;
-      
-      // تحديث الفلتر الحالي إذا كان قيد التشغيل
-      const currentState = this.stateStore.getState();
-      if (currentState?.currentProject?.videoComposition?.videoFilter === filterKey) {
-        this.applyFilter(filterKey);
-      }
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_INTENSITY_CHANGED, {
-        filterKey,
-        intensity,
-        timestamp: Date.now()
-      });
-    }
-  }
-
-  /**
-   * تحديث شفافية الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {number} opacity - الشفافية (0-1)
-   */
-  updateFilterOpacity(filterKey, opacity = 0) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تحديث شفافية الفلتر
-    const currentState = this.stateStore.getState();
-    if (currentState?.currentProject?.videoComposition?.videoFilter === filterKey) {
-      if (this.canvasElement) {
-        this.canvasElement.style.opacity = opacity;
-        
-        // نشر الحدث
-        this.eventAggregator.publish(EVENTS.FILTER_OPACITY_CHANGED, {
-          filterKey,
-          opacity,
-          timestamp: Date.now()
-        });
-      }
-    }
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @returns {boolean} هل الفلتر قيد التشغيل؟
-   */
-  getPlaybackState() {
-    if (!this.canvasElement) return 'unavailable';
-    
-    const computedStyle = window.getComputedStyle(this.canvasElement);
-    return computedStyle.animationPlayState || 'normal';
-  }
-
-  /**
-   * التحقق من زمن الانتهاء
-   * @returns {number} زمن الانتهاء
-   */
-  getFilterFinishTime() {
-    const duration = window.getComputedStyle(this.canvasElement).animationDuration;
-    const delay = window.getComputedStyle(this.canvasElement).animationDelay;
-    return (parseFloat(duration) + parseFloat(delay)) * 1000; // تحويل إلى مللي ثانية
-  }
-
-  /**
-   * التحقق من عدد التكرار
-   * @returns {number} عدد تكرار الفلتر
-   */
-  getFilterIterationCount() {
-    if (!this.canvasElement) return 1;
-    
-    const computedStyle = window.getComputedStyle(this.canvasElement);
-    return parseInt(computedStyle.animationIterationCount) || 1;
-  }
-
-  /**
-   * التحقق من زمن الفلتر
-   * @returns {number} زمن الفلتر
-   */
-  getFilterDelay() {
-    if (!this.canvasElement) return 0;
-    
-    const delay = window.getComputedStyle(this.canvasElement).animationDelay;
-    return parseFloat(delay) * 1000; // تحويل إلى مللي ثانية
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {boolean} isPlaying - هل الفلتر قيد التشغيل؟
-   */
-  handleFilterPlaybackChange(isPlaying) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = isPlaying ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(
-      isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED,
-      {
-        timestamp: Date.now()
-      }
-    );
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterFinish() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير انتهاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.3s ease-out';
-    this.canvasElement.style.filter = 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_FINISHED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterCancel() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير إلغاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.2s ease-in';
-    this.canvasElement.style.filter = 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_CANCELED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterUpdate() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.handleFilterUpdate'
-      });
-      return;
-    }
-    
-    // تحديث الفلتر
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[currentFilter].value || 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_UPDATED, {
-      filterKey: currentFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterReset() {
-    // إعادة تعيين الفلتر
-    this.resetFilter();
-    
-    // إعادة تعيين واجهة المستخدم
-    this.updateFilterSelectUI('none');
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RESET, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterPlay() {
-    if (!this.canvasElement) return;
-    
-    // تشغيل الفلتر
-    this.canvasElement.style.animationPlayState = 'running';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PLAYING, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterStop() {
-    if (!this.canvasElement) return;
-    
-    // إيقاف الفلتر
-    this.canvasElement.style.animationPlayState = 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_STOPPED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} time - الزمن المحدد
-   */
-  handleFilterSeek(time) {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.handleFilterSeek'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر عند الزمن المحدد
-    this.applyFilterWithDurationRange(currentFilter, time, time + 1000);
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} playbackRate - معدل التشغيل
-   */
-  handleFilterRateChange(playbackRate) {
-    if (!this.canvasElement) return;
-    
-    // تحديث معدل التشغيل
-    this.canvasElement.style.animationDuration = `${1 / playbackRate}s`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RATE_CHANGED, {
-      playbackRate,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterDirectionChange() {
-    const currentState = this.stateStore.getState();
-    const direction = currentState?.currentProject?.videoComposition?.filterDirection || 'normal';
-    
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {boolean} isPlaying - هل الفلتر قيد التشغيل؟
-   */
-  handleFilterPlayStateChange(isPlaying) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = isPlaying ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(
-      isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED,
-      {
-        timestamp: Date.now()
-      }
-    );
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterFinish() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير انتهاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.3s ease-out';
-    this.canvasElement.style.filter = 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_FINISHED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterCancel() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير إلغاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.2s ease-in';
-    this.canvasElement.style.filter = 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_CANCELED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterUpdate() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.handleFilterUpdate'
-      });
-      return;
-    }
-    
-    // تحديث الفلتر
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[currentFilter]?.value || 'none';
-    
-    // تحديث واجهة المستخدم
-    this.updateFilterSelectUI(currentFilter);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_UPDATED, {
-      filterKey: currentFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterReset() {
-    // إعادة تعيين الفلتر
-    this.resetFilter();
-    
-    // تحديث واجهة المستخدم
-    this.updateFilterSelectUI('none');
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RESET, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterPlay() {
-    if (!this.canvasElement) return;
-    
-    // تشغيل الفلتر
-    this.canvasElement.style.animationPlayState = 'running';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PLAYING, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterStop() {
-    if (!this.canvasElement) return;
-    
-    // إيقاف الفلتر
-    this.canvasElement.style.animationPlayState = 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_STOPPED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} time - الزمن المحدد
-   */
-  handleFilterSeek(time) {
-    const logger = this.errorLogger || console;
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.handleFilterSeek'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر عند الزمن المحدد
-    this.applyFilterWithDurationRange(currentFilter, time, time + 1000);
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} playbackRate - معدل التشغيل
-   */
-  handleFilterRateChange(playbackRate) {
-    if (!this.canvasElement) return;
-    
-    // تحديث معدل التشغيل
-    this.canvasElement.style.animationDuration = `${1 / playbackRate}s`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RATE_CHANGED, {
-      playbackRate,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} direction - اتجاه الفلتر
-   */
-  handleFilterDirectionChange(direction) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  handleFilterStateChange(filterKey) {
-    if (!this.isFilterSupported(filterKey)) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterStateChange'),
-        origin: 'VideoFilterApplier.handleFilterStateChange'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_STATE_CHANGED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} newDuration - المدة الجديدة
-   */
-  handleFilterDurationChange(newDuration) {
-    if (!this.canvasElement) return;
-    
-    // تحديث المدة
-    this.canvasElement.style.animationDuration = `${newDuration}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DURATION_CHANGED, {
-      duration: newDuration,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} newEasing - التدرج الجديد
-   */
-  handleFilterEasingChange(newEasing) {
-    if (!this.canvasElement) return;
-    
-    // تحديث التدرج
-    this.canvasElement.style.transitionTimingFunction = newEasing || 'linear';
+    const appState = this.stateStore.getState();
+    const currentFilterKeyInState = appState?.currentProject?.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
+    const filterKey = this.isFilterSupported(currentFilterKeyInState) ? currentFilterKeyInState : DEFAULT_FILTER_KEY;
     
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_EASING_CHANGED, {
-      easing: newEasing,
-      timestamp: Date.now()
-    });
-  }
+    const filterConfig = SUPPORTED_VIDEO_FILTERS[filterKey];
 
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} iterationCount - عدد التكرار الجديد
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} direction - اتجاه الفلتر
-   */
-  handleFilterDirectionChange(direction) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {boolean} reverse - هل الاتجاه معكوس؟
-   */
-  handleFilterReverseChange(reverse) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = reverse ? 'reverse' : 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_REVERSED_CHANGED, {
-      reversed: reverse,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} newBlendMode - وضعية المزج الجديدة
-   */
-  handleFilterBlendModeChange(newBlendMode) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وضعية المزج
-    this.canvasElement.style.mixBlendMode = newBlendMode || 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_BLEND_MODE_CHANGED, {
-      blendMode: newBlendMode,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من زمن الانتهاء
-   * @returns {number} زمن الانتهاء
-   */
-  getFilterFinishTime() {
-    const duration = window.getComputedStyle(this.canvasElement).animationDuration;
-    const delay = window.getComputedStyle(this.canvasElement).animationDelay;
-    return (parseFloat(duration) + parseFloat(delay)) * 1000; // تحويل إلى مللي ثانية
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {number} time - الزمن المحدد
-   */
-  applyFilterWithDurationRange(filterKey, startTime, endTime) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    const duration = endTime - startTime;
-    if (duration <= 0) return;
-    
-    // تطبيق الفلتر عند الزمن الابتدائي
-    const timer = setTimeout(() => {
-      if (this.canvasElement) {
-        this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-        
-        // إزالة الفلتر بعد الانتهاء
-        const endTimer = setTimeout(() => {
-          this.canvasElement.style.filter = 'none';
-          clearTimeout(timer);
-        }, duration);
-      }
-    }, duration);
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Object} frameData - بيانات الإطار
-   */
-  applyFilterOnFrame(filterKey, frameData) {
-    if (!frameData || !frameData.frameNumber) return;
-    
-    const frame = document.getElementById(`frame-${frameData.frameNumber}`);
-    if (frame) {
-      frame.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_ON_FRAME, {
-      filterKey,
-      frameNumber: frameData.frameNumber,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب أن يتحقق
-   */
-  applyFilterIf(filterKey, condition) {
-    if (!condition || !condition()) return;
-    
-    this.applyFilter(filterKey);
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب ألا يتحقق
-   */
-  applyFilterUnless(filterKey, condition) {
-    if (!condition || condition()) return;
-    
-    this.applyFilter(filterKey);
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToAll(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على الكانفاس
-    if (this.canvasElement) {
-      this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    }
-    
-    // تطبيق الفلتر على النصوص
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    });
-    
-    // تطبيق الفلتر على الخلفية
-    const backgroundElements = document.querySelectorAll('.background-element');
-    backgroundElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_ALL, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToSelected(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على العناصر المحددة
-    const selectedElements = document.querySelectorAll('.selected-element');
-    selectedElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_SELECTED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToTimeline(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على المؤقت
-    const timelineElement = document.querySelector('.timeline');
-    if (timelineElement) {
-      timelineElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TIMELINE, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToExport(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على زر التصدير
-    const exportButton = document.querySelector('#export-button');
-    if (exportButton) {
-      exportButton.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_EXPORT, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToBackground(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على الخلفية
-    const background = document.querySelector('.background');
-    if (background) {
-      background.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_BACKGROUND, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToText(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على النصوص
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TEXT, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToAudio(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على الصوت
-    const audioElement = document.querySelector('audio#main-audio');
-    if (audioElement) {
-      audioElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_AUDIO, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToAIContent(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على الذكاء الاصطناعي
-    const aiElements = document.querySelectorAll('[data-ai]');
-    aiElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_AI_CONTENT, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterWithTransition(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تفعيل الانتقال
-    this.canvasElement.classList.add(`filter-transition-${filterKey}`);
-    
-    // إزالة الانتقال بعد الانتهاء
-    setTimeout(() => {
-      this.canvasElement.classList.remove(`filter-transition-${filterKey}`);
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_TRANSITION_COMPLETED, {
-        filterKey,
-        transition: 'fade',
-        timestamp: Date.now()
-      });
-    }, 500); // مدة الانتقال الافتراضية
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterWithAnimation(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تفعيل الحركة
-    this.canvasElement.classList.add(`filter-animation-${filterKey}`);
-    
-    // إزالة الفئة بعد الانتهاء
-    this.canvasElement.addEventListener('animationend', onAnimationEnd = () => {
-      this.canvasElement.classList.remove(`filter-animation-${filterKey}`);
-      this.canvasElement.removeEventListener('animationend', onAnimationEnd);
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_ANIMATION_COMPLETED, {
-        filterKey,
-        timestamp: Date.now()
-      });
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @returns {boolean} هل الفيديو جاهز؟
-   */
-  isFilterReady() {
-    return this.canvasElement && this.filterSelectElement && this.stateStore.getState().currentProject;
-  }
-
-  /**
-   * التحقق مما إذا كان الفلتر مدعومًا
-   * @param {string} filterKey - مفتاح الفلتر
-   * @returns {boolean} هل الفلتر مدعوم؟
-   */
-  isFilterSupported(filterKey) {
-    return !!SUPPORTED_VIDEO_FILTERS[filterKey];
-  }
-
-  /**
-   * التحقق من صحة الملف الشخصي
-   * @returns {boolean} هل الملف جاهز؟
-   */
-  selfTest() {
-    try {
-      const currentState = this.getCurrentState();
-      const testCanvas = document.createElement('canvas');
-      const testContext = testCanvas.getContext('2d');
-      
-      // التحقق من دعم الفلتر
-      const supportedFilters = Object.keys(SUPPORTED_VIDEO_FILTERS);
-      const hasSupportedFilters = supportedFilters.some(key => {
-        const filter = SUPPORTED_VIDEO_FILTERS[key];
-        return filter && filter.value;
-      });
-      
-      return hasSupportedFilters && currentState.isTainted !== undefined;
-    } catch (e) {
-      this.errorLogger.handleError(e, {
-        message: this.localizationService.translate('VideoFilterApplier.SelfTestFailed'),
-        origin: 'VideoFilterApplier.selfTest'
-      });
-      return false;
-    }
-  }
-
-  /**
-   * إعادة تعيين الفلتر
-   */
-  resetFilter() {
-    if (this.canvasElement) {
-      this.canvasElement.style.filter = 'none';
-      this.canvasElement.style.webkitFilter = 'none';
-      this.canvasElement.style.mozFilter = 'none';
-      this.canvasElement.style.msFilter = 'none';
-      this.canvasElement.style.oFilter = 'none';
-      this.canvasElement.style.animation = '';
-      this.canvasElement.style.webkitAnimation = '';
-      this.canvasElement.style.mozAnimation = '';
-      this.canvasElement.style.msAnimation = '';
-      this.canvasElement.style.oAnimation = '';
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_RESET, {
-        timestamp: Date.now()
-      });
-    }
-  }
-
-  /**
-   * ملء قائمة الفلاتر
-   */
-  populateFilterSelect() {
-    // التحقق من استعداد العناصر
-    const currentState = this.stateStore.getState();
-    const filterSelect = this.filterSelectElement;
-    
-    if (!filterSelect) return;
-    
-    // مسح الفلاتر الحالية
-    filterSelect.innerHTML = '';
-    
-    // إضافة الفلاتر المدعومة
-    Object.entries(SUPPORTED_VIDEO_FILTERS).forEach(([key, filter]) => {
-      const option = document.createElement('option');
-      option.value = key;
-      option.textContent = filter.name;
-      filterSelect.appendChild(option);
-    });
-    
-    // تحديث الفلتر الحالي
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    this.updateFilterSelectUI(currentFilter);
-    
-    this.errorLogger.logInfo({
-      message: this.localizationService.translate('VideoFilterApplier.FiltersPopulated'),
-      origin: 'VideoFilterApplier.populateFilterSelect'
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_POPULATED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تحديث واجهة المستخدم لتحديد الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  updateFilterSelectUI(filterKey) {
-    const logger = this.errorLogger || console;
-    
-    if (!this.filterSelectElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.updateFilterSelectUI'
-      });
-      return;
-    }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      filterKey = 'none';
-    }
-    
-    if (this.filterSelectElement.value !== filterKey) {
-      this.filterSelectElement.value = filterKey;
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.UI_ELEMENT_UPDATED, {
-        element: 'videoFilterSelect',
-        value: filterKey,
-        timestamp: Date.now()
-      });
-    }
-  }
-
-  /**
-   * تطبيق الفلتر على الكانفاس
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilter(filterKey) {
-    const logger = this.errorLogger || console;
-    
-    if (!this.canvasElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.CanvasNotReady'),
-        origin: 'VideoFilterApplier.applyFilter'
-      });
-      return;
-    }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyFilter'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.VIDEO_FILTER_APPLIED, {
-      filterKey,
-      filterValue: SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none',
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تحديث واجهة المستخدم لتحديد الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  updateFilterSelectUI(filterKey) {
-    if (!this.filterSelectElement) return;
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      filterKey = 'none';
-    }
-    
-    if (this.filterSelectElement.value !== filterKey) {
-      this.filterSelectElement.value = filterKey;
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.UI_ELEMENT_UPDATED, {
-        element: 'videoFilterSelect',
-        value: filterKey,
-        timestamp: Date.now()
-      });
-    }
-  }
-
-  /**
-   * التعامل مع تغيير الفلتر من القائمة
-   */
-  handleFilterSelectionChange(event) {
-    const logger = this.errorLogger || console;
-    const selectEl = this.filterSelectElement;
-    
-    if (!selectEl) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.handleFilterSelectionChange'
-      });
-      return;
-    }
-    
-    const selectedFilterKey = selectEl.value;
-    
-    if (!SUPPORTED_VIDEO_FILTERS[selectedFilterKey]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.UnsupportedFilterSelected'),
-        origin: 'VideoFilterApplier.handleFilterSelectionChange'
-      });
-      return;
-    }
-    
-    // تحديث الحالة
-    this.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { 
-      videoComposition: { videoFilter: selectedFilterKey }
-    });
-    
-    // تطبيق الفلتر
-    this.applyFilter(selectedFilterKey);
-    
-    // تسجيل التغيير
-    logger.logInfo({
-      message: this.localizationService.translate('VideoFilterApplier.FilterApplied', { filter: selectedFilterKey }),
-      origin: 'VideoFilterApplier.handleFilterSelectionChange'
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الكانفاس
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  _applyFilterToCanvasDirect(filterKey) {
-    const logger = this.errorLogger || console;
-    
-    if (!this.canvasElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.CanvasNotReady'),
-        origin: 'VideoFilterApplier._applyFilterToCanvasDirect'
-      });
-      return;
-    }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier._applyFilterToCanvasDirect'
-      });
-      return;
-    }
-    
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.VIDEO_FILTER_APPLIED, {
-      filterKey,
-      filterValue: SUPPORTED_VIDEO_FILTERS[filterKey].value,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر مع انتقال
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} transition - نوع الانتقال
-   */
-  applyFilterWithTransition(filterKey, transition = 'fade') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    const transitionClass = `filter-transition-${filterKey}-${transition}`;
-    this.canvasElement.classList.add(transitionClass);
-    
-    // إزالة الفئة بعد الانتهاء
-    setTimeout(() => {
-      this.canvasElement.classList.remove(transitionClass);
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_TRANSITION_COMPLETED, {
-        filterKey,
-        transition,
-        timestamp: Date.now()
-      });
-    }, 500); // مدة الانتقال الافتراضية
-  }
-
-  /**
-   * تطبيق الفلتر مع حركة
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} animation - نوع الحركة
-   */
-  applyFilterWithAnimation(filterKey, animation = 'fadeIn') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    this.canvasElement.classList.add(`filter-animation-${filterKey}-${animation}`);
-    
-    // إزالة الفئة بعد الانتهاء
-    this.canvasElement.addEventListener('animationend', onAnimationEnd = () => {
-      this.canvasElement.classList.remove(`filter-animation-${filterKey}-${animation}`);
-      this.canvasElement.removeEventListener('animationend', onAnimationEnd);
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_ANIMATION_COMPLETED, {
-        filterKey,
-        animation,
-        timestamp: Date.now()
-      });
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الكانفاس
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  _applyFilterToCanvasDirect(filterKey) {
-    if (!this.canvasElement) return;
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      filterKey = 'none';
-    }
-    
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.VIDEO_FILTER_APPLIED, {
-      filterKey,
-      filterValue: SUPPORTED_VIDEO_FILTERS[filterKey].value,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تحديث واجهة المستخدم لتحديد الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  updateFilterSelectUI(filterKey) {
-    const logger = this.errorLogger || console;
-    
-    if (!this.filterSelectElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.updateFilterSelectUI'
-      });
-      return;
-    }
-    
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      filterKey = 'none';
-    }
-    
-    if (this.filterSelectElement.value !== filterKey) {
-      this.filterSelectElement.value = filterKey;
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.UI_ELEMENT_UPDATED, {
-        element: 'videoFilterSelect',
-        value: filterKey,
-        timestamp: Date.now()
-      });
-    }
-  }
-
-  /**
-   * التعامل مع تغيير الفلتر من القائمة
-   * @param {Event} event - حدث تغيير الفلتر
-   */
-  handleFilterSelectionChange(event) {
-    const logger = this.errorLogger || console;
-    const selectEl = this.filterSelectElement;
-    
-    if (!selectEl) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.handleFilterSelectionChange'
-      });
-      return;
-    }
-    
-    const selectedFilterKey = selectEl.value;
-    
-    // التحقق مما إذا كان الفلتر مدعومًا
-    if (!this.isFilterSupported(selectedFilterKey)) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.UnsupportedFilterSelected'),
-        origin: 'VideoFilterApplier.handleFilterSelectionChange'
-      });
-      return;
-    }
-    
-    // تحديث الحالة
-    this.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { 
-      videoComposition: { videoFilter: selectedFilterKey }
-    });
-    
-    // تطبيق الفلتر
-    this.applyFilter(selectedFilterKey);
-    
-    // تسجيل التغيير
-    logger.logInfo({
-      message: this.localizationService.translate('VideoFilterApplier.FilterApplied', { filter: selectedFilterKey }),
-      origin: 'VideoFilterApplier.handleFilterSelectionChange'
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.VIDEO_FILTER_APPLIED, {
-      filterKey: selectedFilterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * ملء قائمة الفلاتر في الواجهة
-   */
-  populateFilterSelect() {
-    const logger = this.errorLogger || console;
-    
-    if (!this.filterSelectElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterSelectElementMissing'),
-        origin: 'VideoFilterApplier.populateFilterSelect'
-      });
-      return;
-    }
-    
-    // مسح الخيارات الحالية
-    this.filterSelectElement.innerHTML = '';
-    
-    // إضافة الفلاتر
-    Object.entries(SUPPORTED_VIDEO_FILTERS).forEach(([key, filter]) => {
-      const option = document.createElement('option');
-      option.value = key;
-      option.textContent = filter.name;
-      this.filterSelectElement.appendChild(option);
-    });
-    
-    // إعداد الفلتر الحالي
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    this.updateFilterSelectUI(currentFilter);
-    
-    logger.logInfo({
-      message: this.localizationService.translate('VideoFilterApplier.FiltersPopulated'),
-      origin: 'VideoFilterApplier.populateFilterSelect'
-    });
-  }
-
-  /**
-   * تطبيق الفلتر الحالي من الحالة
-   */
-  applyCurrentFilter() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    this.applyFilter(currentFilter);
-  }
-
-  /**
-   * إعادة تعيين جميع الفلاتر
-   */
-  resetAllFilters() {
-    this.resetFilter();
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.ALL_FILTERS_RESET, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تبديل الفلتر
-   */
-  toggleFilter() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (currentFilter === 'none') {
-      this.applyFilter('grayscale');
-    } else {
-      this.applyFilter('none');
-    }
-  }
-
-  /**
-   * التعامل مع تغيير عدد التكرار
-   * @param {number} iterationCount - عدد التكرار الجديد
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير اتجاه الفلتر
-   * @param {string} direction - اتجاه الفلتر (rtl أو ltr)
-   */
-  handleFilterDirection(direction = 'normal') {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDelay - الزمن الجديد
-   */
-  handleFilterDelayChange(newDelay) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDelay = `${newDelay}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DELAY_CHANGED, {
-      delay: newDelay,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير تدرج الفلتر
-   * @param {string} newEasing - التدرج الجديد
-   */
-  handleFilterEasingChange(newEasing) {
-    if (!this.canvasElement) return;
-    
-    // تحديث التدرج
-    this.canvasElement.style.transitionTimingFunction = newEasing || 'linear';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_EASING_CHANGED, {
-      easing: newEasing,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير عدد التكرار
-   * @param {number} iterationCount - عدد التكرار الجديد
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير اتجاه الفلتر
-   * @param {string} direction - الاتجاه الجديد
-   */
-  handleFilterDirectionChange(direction) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDuration - الزمن الجديد
-   */
-  handleFilterDurationChange(newDuration) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDuration = `${newDuration}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DURATION_CHANGED, {
-      duration: newDuration,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDelay - التأخير الجديد
-   */
-  handleFilterDelayChange(newDelay) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDelay = `${newDelay}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DELAY_CHANGED, {
-      delay: newDelay,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDuration - الزمن الجديد
-   */
-  handleFilterDurationChange(newDuration) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDuration = `${newDuration}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DURATION_CHANGED, {
-      duration: newDuration,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير التدرج
-   * @param {string} newEasing - التدرج الجديد
-   */
-  handleFilterEasingChange(newEasing) {
-    if (!this.canvasElement) return;
-    
-    // تحديث التدرج
-    this.canvasElement.style.transitionTimingFunction = newEasing || 'linear';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_EASING_CHANGED, {
-      easing: newEasing,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير عدد التكرار
-   * @param {number} iterationCount - عدد التكرار الجديد
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير اتجاه الفلتر
-   * @param {string} direction - الاتجاه الجديد
-   */
-  handleFilterDirectionChange(direction) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير وضعية المزج
-   * @param {string} newBlendMode - وضعية المزج الجديدة
-   */
-  handleFilterBlendModeChange(newBlendMode) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وضعية المزج
-    this.canvasElement.style.mixBlendMode = newBlendMode || 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_BLEND_MODE_CHANGED, {
-      blendMode: newBlendMode,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير زمن الفلتر
-   * @param {number} newDuration - الزمن الجديد
-   */
-  handleFilterDurationChange(newDuration) {
-    if (!this.canvasElement) return;
-    
-    // تحديث زمن الفلتر
-    this.canvasElement.style.animationDuration = `${newDuration}ms`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DURATION_CHANGED, {
-      duration: newDuration,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير تقدم الفلتر
-   * @param {number} progress - تقدم الحركة (0-1)
-   */
-  handleFilterProgressChange(progress) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تقدم الحركة
-    this.canvasElement.style.setProperty('--filter-progress', progress);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PROGRESS_CHANGED, {
-      progress: progress,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير المقياس
-   * @param {number} scale - المقياس الجديد (مثل 1.5، 0.7)
-   */
-  handleFilterScaleChange(scale) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق المقياس
-    this.canvasElement.style.transform = `scale(${scale})`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_SCALE_CHANGED, {
-      scale,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير الزاوية
-   * @param {number} rotation - الزاوية الجديدة
-   */
-  handleFilterRotationChange(rotation) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق الدوران
-    this.canvasElement.style.transform = `rotate(${rotation}deg)`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ROTATION_CHANGED, {
-      rotation,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التعامل مع تغيير المجموعة
-   * @param {string} group - المجموعة الجديدة
-   * @param {string} newBlendMode - وضعية المزج الجديدة
-   */
-  handleFilterGroupChange(group) {
-    if (!this.canvasElement) return;
-    
-    // تحديث المجموعة
-    this.canvasElement.setAttribute('data-filter-group', group);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_GROUP_CHANGED, {
-      group,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} playState - حالة التشغيل
-   */
-  handleFilterPlaybackChange(playState) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = playState ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(playState ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {boolean} isPlaying - هل الفلتر قيد التشغيل؟
-   */
-  handleFilterPlayStateChange(isPlaying) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = isPlaying ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(
-      isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED, {
-        timestamp: Date.now()
-      }
-    );
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} newEasing - التدرج الجديد
-   */
-  applyFilterWithEasing(filterKey, newEasing) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر مع التدرج
-    this.canvasElement.style.transitionTimingFunction = newEasing || 'linear';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_EASING_CHANGED, {
-      easing: newEasing,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} newDirection - اتجاه الفلتر
-   */
-  applyFilterWithDirection(filterKey, newDirection) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق اتجاه الفلتر
-    this.canvasElement.classList.add(`filter-transition-${filterKey}-${newDirection}`);
-    
-    // إزالة الفئة بعد الانتهاء
-    setTimeout(() => {
-      this.canvasElement.classList.remove(`filter-transition-${filterKey}-${newDirection}`);
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-        direction: newDirection,
-        timestamp: Date.now()
-      });
-    }, 500); // مدة الانتقال الافتراضية
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {number} startTime - الزمن الابتدائي
-   * @param {number} endTime - الزمن النهائي
-   */
-  applyFilterWithDurationRange(filterKey, startTime, endTime) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    const duration = endTime - startTime;
-    if (duration <= 0) return;
-    
-    // تطبيق الفلتر عند الزمن الابتدائي
-    const timer = setTimeout(() => {
-      this._applyFilterToCanvasDirect(filterKey);
-      
-      // إزالة الفلتر بعد الانتهاء
-      const endTimer = setTimeout(() => {
-        this._applyFilterToCanvasDirect('none');
-      }, duration);
-      
-      // تخزين المؤقت لتنظيفه لاحقًا
-      durationTimers.push({ timer, endTimer });
-    }, startTime);
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Object} frameData - بيانات الإطار
-   */
-  applyFilterOnFrame(filterKey, frameData) {
-    if (!this.isFilterSupported(filterKey) || !frameData || !frameData.frameNumber) return;
-    
-    const frame = document.getElementById(`frame-${frameData.frameNumber}`);
-    if (frame) {
-      frame.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_APPLIED_ON_FRAME, {
-        filterKey,
-        frameNumber: frameData.frameNumber,
-        timestamp: Date.now()
-      });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب أن يتحقق
-   */
-  applyFilterIf(filterKey, condition) {
-    if (typeof condition !== 'function') return;
-    
-    if (condition()) {
-      this.applyFilter(filterKey);
-    }
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب أن لا يتحقق
-   */
-  applyFilterUnless(filterKey, condition) {
-    if (typeof condition !== 'function') return;
-    
-    if (!condition()) {
-      this.applyFilter(filterKey);
-    }
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyCurrentFilter() {
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!this.isFilterSupported(currentFilter)) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey'),
-        origin: 'VideoFilterApplier.applyCurrentFilter'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر الحالي
-    this._applyFilterToCanvasDirect(currentFilter);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED, {
-      filterKey: currentFilter,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * إعادة تعيين جميع الفلاتر
-   */
-  resetAllFilters() {
-    // إعادة تعيين الفلتر
-    this.resetFilter();
-    
-    // تحديث واجهة المستخدم
-    this.updateFilterSelectUI('none');
-  }
-
-  /**
-   * تبديل الفلتر
-   * @param {Function} condition - الشرط الذي يجب أن يتحقق
-   */
-  toggleFilterOnCondition(condition) {
-    if (typeof condition !== 'function') return;
-    
-    const shouldToggle = condition();
-    if (shouldToggle) {
-      this.toggleFilter();
-    }
-  }
-
-  /**
-   * تبديل الفلتر إلا إذا تحقق شرط
-   * @param {Function} condition - الشرط الذي يجب ألا يتحقق
-   */
-  toggleFilterUnless(condition) {
-    if (typeof condition !== 'function') return;
-    
-    const shouldNotToggle = condition();
-    if (!shouldNotToggle) {
-      this.toggleFilter();
-    }
-  }
-
-  /**
-   * تطبيق الفلتر على جميع العناصر
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToAll(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على الكانفاس
-    if (this.canvasElement) {
-      this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    }
-    
-    // تطبيق الفلتر على النصوص
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    });
-    
-    // تطبيق الفلتر على الخلفية
-    const backgroundElements = document.querySelectorAll('.background-element');
-    backgroundElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_ALL, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على العناصر المحددة
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} transition - نوع الانتقال
-   */
-  applyFilterWithTransition(filterKey, transition = 'fade') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    // تفعيل الانتقال
-    this.canvasElement.classList.add(`filter-transition-${filterKey}-${transition}`);
-    
-    // إزالة الفئة بعد الانتهاء
-    setTimeout(() => {
-      this.canvasElement.classList.remove(`filter-transition-${filterKey}-${transition}`);
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_TRANSITION_COMPLETED, {
-        filterKey,
-        transition,
-        timestamp: Date.now()
-      });
-    }, 500); // مدة الانتقال الافتراضية
-  }
-
-  /**
-   * تطبيق الفلتر مع حركة
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} animation - نوع الحركة
-   */
-  applyFilterWithAnimation(filterKey, animation = 'fadeIn') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    this.canvasElement.classList.add(`filter-animation-${filterKey}-${animation}`);
-    
-    // إزالة الفئة بعد الانتهاء
-    this.canvasElement.addEventListener('animationend', onAnimationEnd = () => {
-      this.canvasElement.classList.remove(`filter-animation-${filterKey}-${animation}`);
-      this.canvasElement.removeEventListener('animationend', onAnimationEnd);
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_ANIMATION_COMPLETED, {
-        filterKey,
-        animation,
-        timestamp: Date.now()
-      });
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الخلفية
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} animation - نوع الحركة
-   */
-  applyFilterToBackground(filterKey, animation = 'fadeIn') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    // تطبيق الفلتر على الخلفية
-    const backgroundElements = document.querySelectorAll('.background-element');
-    backgroundElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_BACKGROUND, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على النصوص
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} animation - نوع الحركة
-   */
-  applyFilterToText(filterKey, animation = 'fadeIn') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    // تطبيق الفلتر على النصوص
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TEXT, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على المؤقت
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} transition - نوع الانتقال
-   */
-  applyFilterToTimeline(filterKey, transition = 'fade') {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    // تطبيق الفلتر على المؤقت
-    const timelineElement = document.querySelector('.timeline');
-    if (timelineElement) {
-      timelineElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TIMELINE, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر عند التصدير
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToExport(filterKey) {
-    if (!this.isFilterSupported(filterKey)) {
-      filterKey = 'none';
-    }
-    
-    // تطبيق الفلتر عند التصدير
-    const exportSettings = this.stateStore.getState().currentProject?.exportSettings;
-    if (exportSettings) {
-      const exportButton = document.querySelector('#export-button');
-      if (exportButton) {
-        exportButton.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-        
-        // نشر الحدث
-        this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_EXPORT, {
-          filterKey,
-          timestamp: Date.now()
-        });
-      }
-  }
-
-  /**
-   * إضافة فلتر مخصص
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Object} filterConfig - تكوين الفلتر
-   */
-  addCustomFilter(filterKey, filterConfig) {
-    if (!filterKey || !filterConfig || !filterConfig.name || !filterConfig.value) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.InvalidCustomFilterConfig'),
-        origin: 'VideoFilterApplier.addCustomFilter'
-      });
-      return;
-    }
-    
-    // إضافة الفلتر إلى القائمة المدعومة
-    SUPPORTED_VIDEO_FILTERS[filterKey] = filterConfig;
-    
-    // تحديث واجهة المستخدم
-    const option = document.createElement('option');
-    option.value = filterKey;
-    option.textContent = filterConfig.name;
-    this.filterSelectElement.appendChild(option);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_ADDED, {
-      filterKey,
-      filterConfig,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * إزالة فلتر مخصص
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  removeCustomFilter(filterKey) {
-    if (!SUPPORTED_VIDEO_FILTERS[filterKey]) {
-      this.errorLogger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterNotFound', { filterKey }),
-        origin: 'VideoFilterApplier.removeCustomFilter'
-      });
-      return;
-    }
-    
-    // إزالة الفلتر من القائمة
-    delete SUPPORTED_VIDEO_FILTERS[filterKey];
-    
-    // إزالة الفلتر من واجهة المستخدم
-    const option = this.filterSelectElement.querySelector(`option[value="${filterKey}"]`);
-    if (option) {
-      option.remove();
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_REMOVED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تحديث الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Object} filterConfig - تكوين الفلتر
-   */
-  updateCustomFilter(filterKey, filterConfig) {
-    this.removeCustomFilter(filterKey);
-    this.addCustomFilter(filterKey, filterConfig);
-  }
-
-  /**
-   * تحديث شدة الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {number} intensity - شدة الفلتر (0-1)
-   */
-  updateFilterIntensity(filterKey, intensity = 1) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تحديث شدة الفلتر
-    const numericValue = filterKey.match(/([a-zA-Z]+)$|([a-zA-Z]+)\(([^)]+)\)/);
-    if (numericValue && numericValue[1] && numericValue[2]) {
-      const baseValue = numericValue[1];
-      const newValue = `${baseValue}(${numericValue[2] * intensity})${numericValue[3] ? ')' : ''}`;
-      this.canvasElement.style.filter = newValue;
-      
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_INTENSITY_CHANGED, {
-        filterKey,
-        intensity,
-        timestamp: Date.now()
-      });
-    }
-  }
-
-  /**
-   * تحديث شفافية الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {number} opacity - الشفافية (0-1)
-   */
-  updateFilterOpacity(filterKey, opacity = 1) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تحديث شفافية الفلتر
-    this.canvasElement.style.opacity = opacity;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_OPACITY_CHANGED, {
-      filterKey,
-      opacity,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر تحت شرط معين
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب أن يتحقق
-   */
-  applyFilterIf(filterKey, condition) {
-    if (typeof condition !== 'function') return;
-    
-    if (condition()) {
-      this.applyFilter(filterKey);
-    }
-  }
-
-  /**
-   * تطبيق الفلتر إلا إذا تحقق شرط
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {Function} condition - الشرط الذي يجب ألا يتحقق
-   */
-  applyFilterUnless(filterKey, condition) {
-    if (typeof condition !== 'function') return;
-    
-    if (!condition()) {
-      this.applyFilter(filterKey);
-    }
-  }
-
-  /**
-   * تطبيق الفلتر على الكانفاس
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToCanvas(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على الكانفاس
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على المؤقت
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToTimeline(filterKey) {
-    if (!this.isFilterSupported(filterKey)) return;
-    
-    // تطبيق الفلتر على المؤقت
-    const timelineElement = document.querySelector('.timeline');
-    if (timelineElement) {
-      timelineElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TIMELINE, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من صحة الفلتر
-   * @returns {boolean} هل الفلتر جاهز؟
-   */
-  isFilterReady() {
-    return this.canvasElement && this.filterSelectElement && this.stateStore.getState().currentProject;
-  }
-
-  /**
-   * التحقق مما إذا كان الفلتر مدعومًا
-   * @param {string} filterKey - مفتاح الفلتر
-   * @returns {boolean} هل الفلتر جاهز؟
-   */
-  isFilterAvailable(filterKey) {
-    return this.isFilterReady() && this.isFilterSupported(filterKey);
-  }
-
-  /**
-   * التحقق من صحة الملف الشخصي
-   * @returns {FilterState} الحالة الحالية
-   */
-  getFilterState() {
-    const computedStyle = window.getComputedStyle(this.canvasElement);
-    
     return {
-      filterKey: this.canvasElement.style.filter || 'none',
+      error: null,
+      filterKey,
       filterValue: computedStyle.filter || 'none',
-      isAnimated: computedStyle.animationPlayState === 'running',
-      animationProgress: computedStyle.getPropertyValue('--filter-progress') || 0,
-      animationTiming: computedStyle.animationTimingFunction || 'normal',
-      animationDuration: computedStyle.animationDuration || 'normal',
+      filterName: filterConfig.name || filterKey,
+      filterType: filterConfig.type || 'unknown',
+      filterIntensity: filterConfig.intensity || 0, // Configured intensity
+      isActive: filterKey !== DEFAULT_FILTER_KEY && (computedStyle.filter !== 'none' && computedStyle.filter !== ''),
+      isAnimated: computedStyle.animationName !== 'none' && computedStyle.animationName !== '',
+      animationProgress: parseFloat(computedStyle.getPropertyValue('--filter-progress')) || 0, // Example CSS var
+      animationDuration: computedStyle.animationDuration || '0s',
       animationDelay: computedStyle.animationDelay || '0s',
-      animationFillMode: computedStyle.animationFillMode || 'forwards',
       animationEasing: computedStyle.animationTimingFunction || 'linear',
       animationReverse: computedStyle.animationDirection === 'reverse',
-      animationIterationCount: parseInt(computedStyle.animationIterationCount) || 1,
+      animationIterationCount: parseInt(computedStyle.animationIterationCount, 10) || (computedStyle.animationName !== 'none' ? 1 : 0),
       animationDirection: computedStyle.animationDirection || 'normal',
       animationRunning: computedStyle.animationPlayState === 'running',
       animationName: computedStyle.animationName || 'none',
-      animationGroup: computedStyle.animationGroup || 'default',
-      animationTimingFunction: computedStyle.animationTimingFunction || 'linear',
-      isTainted: computedStyle.filter !== 'none',
+      isTainted: computedStyle.filter !== 'none' && computedStyle.filter !== '',
       timestamp: Date.now()
     };
   }
 
-  /**
-   * التحقق مما إذا كان الفلتر قيد التشغيل
-   * @returns {boolean} هل الفلتر قيد التشغيل؟
-   */
-  isFilterCurrentlyPlaying() {
-    if (!this.canvasElement) return false;
+  /** Toggles between 'none' filter and a default filter (e.g., 'grayscale'). */
+  toggleFilter() {
+    const currentState = this.stateStore.getState();
+    const currentFilterKey = currentState?.currentProject?.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
+    const targetFilterKey = (currentFilterKey === DEFAULT_FILTER_KEY || currentFilterKey === 'none') ? 'grayscale' : DEFAULT_FILTER_KEY;
+
+    if (!this.isFilterSupported(targetFilterKey) && targetFilterKey !== DEFAULT_FILTER_KEY) {
+        this.errorLogger.logWarning({
+            message: this.localizationService.translate('VideoFilterApplier.ToggleTargetInvalid', { key: targetFilterKey }),
+            origin: 'VideoFilterApplier.toggleFilter'
+        });
+        this.applyFilter(DEFAULT_FILTER_KEY); // Fallback if 'grayscale' somehow isn't supported
+    } else {
+        this.applyFilter(targetFilterKey);
+    }
+
+    this.eventAggregator.publish(EVENTS.FILTER_TOGGLED, {
+      previousFilter: currentFilterKey,
+      newFilter: this.stateStore.getState().currentProject.videoComposition.videoFilter, // Get the actually applied one
+      timestamp: Date.now()
+    });
+  }
+
+  _applyFilterToMatchingElements(selector, filterKey, eventNameToPublish, origin) {
+    const effectiveFilterKey = this.isFilterSupported(filterKey) ? filterKey : DEFAULT_FILTER_KEY;
+    if (!this.isFilterSupported(effectiveFilterKey)) { // Double check, though should be caught by effectiveFilterKey logic
+      this.errorLogger.logWarning({
+        message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKeyForElements', { key: filterKey }), origin });
+      return;
+    }
+
+    const elements = document.querySelectorAll(selector);
+    if (elements.length === 0) {
+      this.errorLogger.logInfo({
+        message: this.localizationService.translate('VideoFilterApplier.NoElementsForSelector', { selector }), origin });
+      return;
+    }
+
+    const filterValue = SUPPORTED_VIDEO_FILTERS[effectiveFilterKey].value || 'none';
+    elements.forEach(el => {
+      if (el instanceof HTMLElement) el.style.filter = filterValue;
+    });
+
+    if (eventNameToPublish) {
+      this.eventAggregator.publish(eventNameToPublish, {
+        filterKey: effectiveFilterKey,
+        selector,
+        elementsCount: elements.length,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /** Applies the current main filter to background elements. */
+  applyFilterToBackground() {
+    const currentFilter = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
+    this._applyFilterToMatchingElements('.background-element', currentFilter, EVENTS.FILTER_APPLIED_TO_BACKGROUND, 'VideoFilterApplier.applyFilterToBackground');
+  }
+
+  /** Applies the current main filter to text elements. */
+  applyFilterToText() {
+    const currentFilter = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
+    this._applyFilterToMatchingElements('[data-verse-text]', currentFilter, EVENTS.FILTER_APPLIED_TO_TEXT, 'VideoFilterApplier.applyFilterToText');
+  }
+  
+  /** Updates export settings with the current filter (does not apply visually here). */
+  applyFilterToExport() {
+    const currentState = this.stateStore.getState();
+    if (!currentState?.currentProject?.exportSettings) {
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.ExportSettingsMissing'), origin: 'VideoFilterApplier.applyFilterToExport' });
+      return;
+    }
+    const currentFilter = currentState.currentProject.videoComposition?.videoFilter || DEFAULT_FILTER_KEY;
     
-    const computedStyle = window.getComputedStyle(this.canvasElement);
-    return computedStyle.animationPlayState === 'running';
+    this.stateStore.dispatch(ACTIONS.UPDATE_EXPORT_SETTINGS, { videoFilter: currentFilter });
+    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_EXPORT, { filterKey: currentFilter, timestamp: Date.now() });
   }
 
   /**
-   * التحقق مما إذا كان الفلتر قيد التشغيل
-   * @returns {boolean} هل الفلتر قيد التشغيل؟
-   * @param {string} filterKey - مفتاح الفلتر
+   * Applies a filter to the canvas using a CSS class for transition effects.
+   * Assumes the CSS class defines the transition properties and target filter state.
+   * @param {string} filterKey - The target filter key.
+   * @param {string} [transitionName='fade'] - Name of the transition (maps to CSS class `filter-transition-${transitionName}`).
+   * @param {number} [duration=500] - Expected duration of the transition for fallback cleanup.
    */
-  isFilterCurrentlyPlaying(filterKey) {
-    if (!this.canvasElement) return false;
+  applyFilterWithTransition(filterKey, transitionName = 'fade', duration = 500) {
+    if (!this.canvasElement || !this.isProjectReady()) {
+        this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.CannotApplyTransition'), origin: 'VideoFilterApplier.applyFilterWithTransition'});
+        return;
+    }
+    const targetFilterKey = this.isFilterSupported(filterKey) ? filterKey : DEFAULT_FILTER_KEY;
+    const transitionClass = `filter-transition-${transitionName}`;
+
+    // Set the target filter style directly. The transition class should primarily define 'transition' property.
+    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[targetFilterKey].value || 'none';
+    this.canvasElement.classList.add(transitionClass);
+
+    const onTransitionEnd = (event) => {
+      // Ensure the event is for the filter property if possible, or on the canvas itself
+      if (event.target === this.canvasElement) {
+        this.canvasElement.classList.remove(transitionClass);
+        this.eventAggregator.publish(EVENTS.FILTER_TRANSITION_COMPLETED, {
+          filterKey: targetFilterKey,
+          transition: transitionName,
+          timestamp: Date.now()
+        });
+      }
+    };
+    this.canvasElement.addEventListener('transitionend', onTransitionEnd, { once: true });
     
-    const computedStyle = window.getComputedStyle(this.canvasElement);
-    return computedStyle.filter || 'none';
+    // Fallback if transitionend doesn't fire (e.g., no actual change or interrupted)
+    setTimeout(() => {
+        if (this.canvasElement?.classList.contains(transitionClass)) {
+            this.canvasElement.classList.remove(transitionClass);
+            this.errorLogger.logInfo({message: `Transition fallback for ${transitionClass}`, origin: 'VideoFilterApplier.applyFilterWithTransition'});
+            // Consider publishing completion event here too if not already done
+        }
+    }, duration + 100); // Slightly longer than expected
   }
 
   /**
-   * التحقق من دعم الفلتر
-   * @param {string} filterKey - مفتاح الفلتر
-   * @returns {boolean} هل الفلتر مدعوم؟
-   * @param {string} filterKey - مفتاح الفلتر
+   * Applies a filter to the canvas using a CSS class for animation effects.
+   * Assumes the CSS class defines the animation properties. The filter itself might also
+   * be part of the animation or applied separately.
+   * @param {string} filterKeyToAnimateTo - The filter key that the animation might lead to or work with.
+   * @param {string} [animationName='fadeIn'] - Name of the animation (maps to CSS class `filter-animation-${animationName}`).
    */
-  isFilterSupported(filterKey) {
-    return !!SUPPORTED_VIDEO_FILTERS[filterKey];
+  applyFilterWithAnimation(filterKeyToAnimateTo, animationName = 'fadeIn') {
+     if (!this.canvasElement || !this.isProjectReady()) {
+        this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.CannotApplyAnimation'), origin: 'VideoFilterApplier.applyFilterWithAnimation'});
+        return;
+    }
+    const animationClass = `filter-animation-${animationName}`;
+    const targetFilterKey = this.isFilterSupported(filterKeyToAnimateTo) ? filterKeyToAnimateTo : DEFAULT_FILTER_KEY;
+
+    // Option 1: Animation class sets the filter.
+    // Option 2: Set filter here, animation class animates other props or the filter itself.
+    // For Option 2 (example):
+    // this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[targetFilterKey].value || 'none';
+
+    this.canvasElement.classList.add(animationClass);
+
+    const onAnimationEnd = (event) => {
+      if (event.target === this.canvasElement) { // Make sure it's for the canvas
+        this.canvasElement.classList.remove(animationClass);
+        // The filter might need to persist post-animation, depends on CSS setup.
+        // If animation applied the filter, this.applyFilter(targetFilterKey) might be needed here
+        // to ensure state and style are finally in sync.
+        this.eventAggregator.publish(EVENTS.FILTER_ANIMATION_COMPLETED, {
+          filterKey: targetFilterKey,
+          animation: animationName,
+          timestamp: Date.now()
+        });
+      }
+    };
+    this.canvasElement.addEventListener('animationend', onAnimationEnd, { once: true });
+    
+    // Fallback (animations can have complex durations, get duration from CSS if possible)
+    // const animDurationStr = window.getComputedStyle(this.canvasElement).animationDuration;
+    // const animDurationMs = parseFloat(animDurationStr) * (animDurationStr.endsWith('s') ? 1000 : 1);
+    // setTimeout(... animDurationMs + 100);
+  }
+
+  /** Applies filter if condition is true. */
+  applyFilterIf(filterKey, conditionCallback) {
+    if (typeof conditionCallback === 'function') {
+      try {
+        if (conditionCallback()) this.applyFilter(filterKey);
+      } catch (e) {
+        this.errorLogger.handleError(e, { message: 'Error in conditionCallback for applyFilterIf', origin: 'VideoFilterApplier.applyFilterIf'});
+      }
+    } else {
+      this.errorLogger.logWarning({message: 'Provided condition for applyFilterIf is not a function.', origin: 'VideoFilterApplier.applyFilterIf'});
+    }
   }
 
   /**
-   * التحقق من دعم الفلتر
-   * @returns {boolean} هل الفلتر مدعوم؟
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  isFilterAvailable(filterKey) {
-    const hasProject = !!this.stateStore.getState().currentProject;
-    return hasProject && this.isFilterSupported(filterKey);
-  }
-
-  /**
-   * التحقق من دعم الفلتر
-   * @returns {boolean} هل الفلتر مدعوم؟
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  isFilterReadyForPlayback(filterKey) {
-    return this.isFilterAvailable(filterKey) && this.isFilterSupported(filterKey);
-  }
-
-  /**
-   * التحقق من صحة الفلتر
-   * @returns {boolean} هل الفلتر جاهز؟
-   * @param {string} filterKey - مفتاح الفلتر
+   * Performs a self-test of the module's basic functionality.
+   * @returns {boolean} True if basic tests pass.
    */
   selfTest() {
+    if (!this.canvasElement || !this.errorLogger || !this.localizationService || !this.stateStore) {
+      console.error("VideoFilterApplier.selfTest: Core components missing for self-test.");
+      return false;
+    }
     try {
-      const originalFilter = this.canvasElement.style.filter;
+      const originalFilterState = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter;
+      const originalCanvasFilter = this.canvasElement.style.filter;
+      const testFilterKey = 'grayscale';
+
+      if (!this.isFilterSupported(testFilterKey)) {
+        this.errorLogger.logInfo({ message: `SelfTest: Default test filter '${testFilterKey}' not supported. Skipping apply test.`, origin: "VideoFilterApplier.selfTest" });
+        return Object.keys(SUPPORTED_VIDEO_FILTERS).length > 1;
+      }
+
+      this.applyFilter(testFilterKey);
+      let isApplied = (window.getComputedStyle(this.canvasElement).filter || '').includes('grayscale');
+      let stateUpdated = this.stateStore.getState().currentProject.videoComposition.videoFilter === testFilterKey;
+
+      // Restore
+      this.canvasElement.style.filter = originalCanvasFilter;
+      if(originalFilterState !== undefined) {
+        this.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { videoComposition: { videoFilter: originalFilterState }});
+      } else {
+         this.stateStore.dispatch(ACTIONS.UPDATE_PROJECT_SETTINGS, { videoComposition: { videoFilter: DEFAULT_FILTER_KEY }});
+      }
+      this.updateFilterSelectUI(originalFilterState || DEFAULT_FILTER_KEY);
+
+
+      if (!isApplied) this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.SelfTestFailedApply'), origin: 'VideoFilterApplier.selfTest'});
+      if (!stateUpdated) this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.SelfTestFailedState'), origin: 'VideoFilterApplier.selfTest'});
       
-      // تطبيق فلتر تجريبي
-      this.applyFilter('grayscale');
-      
-      // التحقق مما إذا تم تطبيق الفلتر
-      const isApplied = this.canvasElement.style.filter.includes('grayscale');
-      
-      // استعادة الفلتر الأصلي
-      this.canvasElement.style.filter = originalFilter;
-      
-      return isApplied;
+      return isApplied && stateUpdated;
     } catch (e) {
+      this.errorLogger.handleError(e, { message: this.localizationService.translate('VideoFilterApplier.SelfTestFailedGeneric'), origin: 'VideoFilterApplier.selfTest'});
       return false;
     }
   }
 
   /**
-   * التحقق من صحة الفلتر
-   * @returns {boolean} هل الفلتر قيد التشغيل؟
-   * @param {string} filterKey - مفتاح الفلتر
+   * Updates a specified CSS property on the canvas element and publishes an event.
+   * @param {string} cssProperty - The CSS property to update (e.g., 'animationPlayState', '--filter-progress').
+   * @param {string|number} value - The value to set for the CSS property.
+   * @param {string} eventName - The name of the event to publish.
+   * @param {string} [payloadKey] - Optional key for the value in the event payload.
+   * @param {any} [payloadValue] - Optional value for the payloadKey.
    */
-  checkFilterValidity(filterKey) {
-    const logger = this.errorLogger || console;
-    
-    if (!this.canvasElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.CanvasOrFilterSelectMissing'),
-        origin: 'VideoFilterApplier.checkFilterValidity'
-      });
-      return false;
-    }
-    
-    const currentState = this.stateStore.getState();
-    const currentFilter = currentState?.currentProject?.videoComposition?.videoFilter || 'none';
-    
-    if (!SUPPORTED_VIDEO_FILTERS[currentFilter]) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.UnplayableFilter', { filter: currentFilter }),
-        origin: 'VideoFilterApplier.checkFilterValidity'
-      });
-      return false;
-    }
-    
-    return true;
-  }
-
-  /**
-   * تطبيق الفلتر مع انتقال
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} transition - نوع الانتقال
-   */
-  applyFilterWithTransition(filterKey, transition = 'fade') {
-    if (!this.checkFilterValidity(filterKey)) return;
-    
-    const transitionClass = `filter-transition-${filterKey}-${transition}`;
-    this.canvasElement.classList.add(transitionClass);
-    
-    // إزالة الفئة بعد الانتهاء
-    setTimeout(() => {
-      this.canvasElement.classList.remove(transitionClass);
+  _updateCanvasStyleAndPublish(cssProperty, value, eventName, payloadKey, payloadValue) {
+      if (!this.canvasElement) {
+        this.errorLogger.logWarning({ message: `Canvas element not available for style update: ${cssProperty}`, origin: 'VideoFilterApplier._updateCanvasStyleAndPublish'});
+        return;
+      }
       
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_TRANSITION_COMPLETED, {
-        filterKey,
-        transition,
-        timestamp: Date.now()
-      });
-    }, 500); // مدة الانتقال الافتراضية
-  }
-
-  /**
-   * تطبيق الفلتر مع حركة
-   * @param {string} filterKey - مفتاح الفلتر
-   * @param {string} animation - نوع الحركة
-   */
-  applyFilterWithAnimation(filterKey, animation = 'fadeIn') {
-    if (!this.checkFilterValidity(filterKey)) return;
-    
-    this.canvasElement.classList.add(`filter-animation-${filterKey}-${animation}`);
-    
-    // إزالة الفئة بعد الانتهاء
-    this.canvasElement.addEventListener('animationend', onAnimationEnd = () => {
-      this.canvasElement.classList.remove(`filter-animation-${filterKey}-${animation}`);
-      this.canvasElement.removeEventListener('animationend', onAnimationEnd);
+      if (cssProperty.startsWith('--')) { // CSS Custom Property
+        this.canvasElement.style.setProperty(cssProperty, String(value));
+      } else { // Standard CSS property
+        // @ts-ignore // Allow dynamic style property assignment
+        if (typeof this.canvasElement.style[cssProperty] !== 'undefined') {
+            // @ts-ignore
+            this.canvasElement.style[cssProperty] = String(value);
+        } else {
+            this.errorLogger.logWarning({ message: `Unsupported direct style property: ${cssProperty}`, origin: 'VideoFilterApplier._updateCanvasStyleAndPublish'});
+            return; // Don't publish if style couldn't be set
+        }
+      }
       
-      // نشر الحدث
-      this.eventAggregator.publish(EVENTS.FILTER_ANIMATION_COMPLETED, {
-        filterKey,
-        animation,
-        timestamp: Date.now()
-      });
-    });
+      const eventPayload = { timestamp: Date.now() };
+      if (payloadKey) {
+        // @ts-ignore
+        eventPayload[payloadKey] = payloadValue !== undefined ? payloadValue : value;
+      }
+      this.eventAggregator.publish(eventName, eventPayload);
   }
 
-  /**
-   * تطبيق الفلتر على المؤقت
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToTimeline(filterKey) {
-    if (!this.isFilterReadyForPlayback(filterKey)) return;
-    
-    // تطبيق الفلتر على المؤقت
-    const timelineElement = document.querySelector('.timeline');
-    if (timelineElement) {
-      timelineElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value;
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_TIMELINE, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الصوت
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToAudio(filterKey) {
-    const logger = this.errorLogger || console;
-    
-    if (!this.isFilterReadyForPlayback(filterKey)) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterApplyToAudio'),
-        origin: 'VideoFilterApplier.applyFilterToAudio'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على الصوت
-    const audioElement = document.querySelector('audio#main-audio');
-    if (audioElement) {
-      audioElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    }
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_AUDIO, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الذكاء الاصطناعي
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  applyFilterToAIContent(filterKey) {
-    const logger = this.errorLogger || console;
-    
-    if (!this.isFilterReadyForPlayback(filterKey)) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.FilterApplyToAIContent'),
-        origin: 'VideoFilterApplier.applyFilterToAIContent'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على الذكاء الاصطناعي
-    const aiElements = document.querySelectorAll('.ai-content');
-    aiElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey].value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED_TO_AI, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * تطبيق الفلتر على الخلفية
-   */
-  applyFilterToBackground() {
-    const logger = this.errorLogger || console;
-    
-    if (!this.canvasElement) {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.CanvasNotReady'),
-        origin: 'VideoFilterApplier.applyFilterToBackground'
-      });
-      return;
-    }
-    
-    // تطبيق الفلتر على الخلفية
-    const backgroundType = this.stateStore.getState().currentProject?.background?.type;
-    if (['image', 'video'].includes(backgroundType)) {
-      this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    } else {
-      logger.logWarning({
-        message: this.localizationService.translate('VideoFilterApplier.UnsupportedBackgroundType', { type: backgroundType }),
-        origin: 'VideoFilterApplier.applyFilterToBackground'
-      });
-    }
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {boolean} isPlaying - هل الفلتر قيد التشغيل؟
-   */
+  /** Handles changes to the filter's animation play state (running/paused). */
   handleFilterPlayStateChange(isPlaying) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = isPlaying ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED, {
-      timestamp: Date.now()
-    });
+    this._updateCanvasStyleAndPublish('animationPlayState', isPlaying ? 'running' : 'paused', 
+      isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED, 
+      'isPlaying', isPlaying);
   }
 
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} progress - تقدم الحركة (0-1)
-   */
-  handleFilterProgressChange(progress) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تقدم الحركة
-    this.canvasElement.style.setProperty('--filter-progress', progress);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_PROGRESS_CHANGED, {
-      progress,
-      timestamp: Date.now()
-    });
+  /** Applies a filter for a specified duration then removes it. */
+  applyFilterWithDurationRange(filterKey, startTimeMs, durationMs, timerId = `timed-${Date.now()}`) {
+    // startTimeMs: delay before applying. durationMs: how long it stays applied.
+    if (!this.canvasElement || !this.isFilterSupported(filterKey)) {
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.CannotApplyDurationFilter'), origin: 'VideoFilterApplier.applyFilterWithDurationRange'});
+      return;
+    }
+    if (durationMs <= 0) {
+      this.errorLogger.logWarning({ message: 'Duration for timed filter must be positive.', origin: 'VideoFilterApplier.applyFilterWithDurationRange'});
+      return;
+    }
+
+    this.clearFilterWithDuration(timerId); // Clear any existing timer with this ID
+
+    const filterConfig = SUPPORTED_VIDEO_FILTERS[filterKey];
+
+    const startTimeout = setTimeout(() => {
+      if (!this.canvasElement) { // Element might have been cleaned up
+          this._removeDurationTimer(timerId); return;
+      }
+      // Check if the intended filter for this timer is still desired.
+      // This simple version just applies it. More complex logic could check global state.
+      this.canvasElement.style.filter = filterConfig.value || 'none';
+      
+      const endTimeout = setTimeout(() => {
+        if (this.canvasElement && this.canvasElement.style.filter === filterConfig.value) {
+          // Only remove if this specific filter is still active.
+          // This avoids clearing a filter manually set by the user in the meantime.
+          this.canvasElement.style.filter = DEFAULT_FILTER_KEY === 'none' ? 'none' : SUPPORTED_VIDEO_FILTERS[DEFAULT_FILTER_KEY].value;
+        }
+        this._removeDurationTimer(timerId);
+      }, durationMs);
+
+      // Update timer object with endTimeout ID
+      const timerObj = this._durationTimers.find(t => t.id === timerId);
+      if (timerObj) timerObj.durationEndTimeout = endTimeout;
+
+    }, startTimeMs);
+
+    this._durationTimers.push({ id: timerId, startTimeTimeout: startTimeout, durationEndTimeout: null });
+  }
+  
+  _removeDurationTimer(timerId){
+     this._durationTimers = this._durationTimers.filter(t => t.id !== timerId);
   }
 
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} scale - المقياس (مثل 1.5، 0.7)
-   */
+  /** Clears a specific timed filter. */
+  clearFilterWithDuration(timerId) {
+    const timerIndex = this._durationTimers.findIndex(t => t.id === timerId);
+    if (timerIndex > -1) {
+      const timerObj = this._durationTimers[timerIndex];
+      clearTimeout(timerObj.startTimeTimeout);
+      if (timerObj.durationEndTimeout) clearTimeout(timerObj.durationEndTimeout);
+      this._durationTimers.splice(timerIndex, 1);
+    }
+  }
+
+  /** Example: Update filter animation progress (controlled via CSS custom property). */
+  handleFilterProgressChange(progressPercent) { // 0-100
+    const p = Math.max(0, Math.min(100, progressPercent));
+    this._updateCanvasStyleAndPublish('--filter-progress', `${p}%`, EVENTS.FILTER_PROGRESS_CHANGED, 'progress', p);
+  }
+
+  /** Updates canvas transform scale. */
   handleFilterScaleChange(scale) {
+    this._updateCanvasStyleAndPublish('transform', `scale(${scale})`, EVENTS.FILTER_SCALE_CHANGED, 'scale', scale);
+  }
+
+  /** Updates canvas transform rotation. */
+  handleFilterRotationChange(degrees) {
+    this._updateCanvasStyleAndPublish('transform', `rotate(${degrees}deg)`, EVENTS.FILTER_ROTATION_CHANGED, 'rotation', degrees);
+  }
+  
+  /** Updates canvas mix-blend-mode. */
+  handleFilterBlendModeChange(blendMode = 'normal') {
+    this._updateCanvasStyleAndPublish('mixBlendMode', blendMode, EVENTS.FILTER_BLEND_MODE_CHANGED, 'blendMode', blendMode);
+  }
+
+  /** Updates a CSS animation property on the canvas. */
+  _setAnimationProperty(property, value, eventName, eventPayloadKey) {
+     this._updateCanvasStyleAndPublish(property, value, eventName, eventPayloadKey, value);
+  }
+
+  handleFilterAnimationIterationCountChange(count) {
+    this._setAnimationProperty('animationIterationCount', count, EVENTS.FILTER_ITERATION_COUNT_CHANGED, 'iterationCount');
+  }
+  handleFilterAnimationDirectionChange(direction) {
+    this._setAnimationProperty('animationDirection', direction, EVENTS.FILTER_DIRECTION_CHANGED, 'direction');
+  }
+  handleFilterAnimationDurationChange(durationMs) {
+    this._setAnimationProperty('animationDuration', `${durationMs}ms`, EVENTS.FILTER_DURATION_CHANGED, 'duration');
+  }
+  handleFilterAnimationDelayChange(delayMs) {
+    this._setAnimationProperty('animationDelay', `${delayMs}ms`, EVENTS.FILTER_DELAY_CHANGED, 'delay');
+  }
+  handleFilterAnimationTimingFunctionChange(timingFunction = 'linear') { // Also known as Easing
+    this._setAnimationProperty('animationTimingFunction', timingFunction, EVENTS.FILTER_EASING_CHANGED, 'easing');
+  }
+
+  /**
+   * Handles a "seek" request on the timeline.
+   * This is complex. Interpretation: If an animation is playing, adjust its perceived start.
+   * A common way is `animation-delay: -seekTimeInSeconds` + re-trigger.
+   * For this version, it might re-evaluate active timed filters or re-apply current filter to reset any animation.
+   */
+  handleFilterSeek(payload) { // payload might contain { time: number }
+    const time = payload && typeof payload.time === 'number' ? payload.time : 0;
+    this.errorLogger.logInfo({ 
+      message: this.localizationService.translate('VideoFilterApplier.FilterSeekRequested', { time: time }), 
+      origin: 'VideoFilterApplier.handleFilterSeek'
+    });
+    
+    // 1. Re-evaluate timed filters: Iterate `_durationTimers` config and re-apply or clear based on `time`. (Complex)
+    // 2. Reset current filter's animation:
+    const currentFilterKey = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter;
+    if (currentFilterKey && currentFilterKey !== DEFAULT_FILTER_KEY) {
+        const animState = this.getCurrentState();
+        if(animState.isAnimated) {
+            // Crude way to restart:
+            if(this.canvasElement){
+                const currentAnimationName = this.canvasElement.style.animationName;
+                this.canvasElement.style.animationName = 'none';
+                // Force reflow
+                void this.canvasElement.offsetWidth;
+                this.canvasElement.style.animationName = currentAnimationName || ''; // Reset to what it was, or let CSS rule re-apply
+                this.canvasElement.style.animationDelay = `-${time / 1000}s`; // If animation timeline aligns with main timeline
+                this.handleFilterPlayStateChange(true); // Ensure it's running
+            }
+        }
+    }
+  }
+
+  /**
+   * Adds a custom filter definition.
+   * @param {string} filterKey - Unique key for the custom filter.
+   * @param {FilterConfig} filterConfig - Configuration object for the filter.
+   * @param {boolean} [publishEvent=true] - Whether to publish CUSTOM_FILTER_ADDED event.
+   */
+  addCustomFilter(filterKey, filterConfig, publishEvent = true) {
+    if (!filterKey || !filterConfig || !filterConfig.name || !filterConfig.value) {
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.InvalidCustomFilterConfig'), origin: 'VideoFilterApplier.addCustomFilter'});
+      return;
+    }
+    if (SUPPORTED_VIDEO_FILTERS.hasOwnProperty(filterKey)) {
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.CustomFilterKeyExists', {key: filterKey}), origin: 'VideoFilterApplier.addCustomFilter'});
+      // Optionally update it: return this.updateCustomFilter(filterKey, filterConfig, publishEvent);
+      return;
+    }
+    
+    SUPPORTED_VIDEO_FILTERS[filterKey] = {
+        type: 'custom', intensity: 1, ...filterConfig
+    };
+    
+    this.populateFilterSelect(); // Update UI
+    if (publishEvent) {
+        this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_ADDED, { filterKey, filterConfig, timestamp: Date.now() });
+    }
+    this.errorLogger.logInfo({ message: `Custom filter "${filterKey}" added.`, origin: 'VideoFilterApplier.addCustomFilter'});
+  }
+
+  /** Removes a custom filter definition. */
+  removeCustomFilter(filterKey, publishEvent = true) {
+    if (!this.isFilterSupported(filterKey) || filterKey === DEFAULT_FILTER_KEY) {
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.FilterNotFoundForRemoval', { key: filterKey }), origin: 'VideoFilterApplier.removeCustomFilter' });
+      return;
+    }
+    
+    const currentActiveFilter = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter;
+    if (currentActiveFilter === filterKey) {
+      this.applyFilter(DEFAULT_FILTER_KEY); // Fallback to default if active one is removed
+    }
+    
+    delete SUPPORTED_VIDEO_FILTERS[filterKey];
+    this.populateFilterSelect(); // Update UI
+    
+    if (publishEvent) {
+        this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_REMOVED, { filterKey, timestamp: Date.now() });
+    }
+    this.errorLogger.logInfo({ message: `Custom filter "${filterKey}" removed.`, origin: 'VideoFilterApplier.removeCustomFilter'});
+  }
+
+  /** Updates an existing custom filter definition. */
+  updateCustomFilter(filterKey, newConfig, publishEvent = true) {
+    if (!this.isFilterSupported(filterKey)) {
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.FilterNotFoundForUpdate', { key: filterKey }), origin: 'VideoFilterApplier.updateCustomFilter'});
+      // Optionally add it: return this.addCustomFilter(filterKey, newConfig, publishEvent);
+      return;
+    }
+     if (!newConfig || !newConfig.name || !newConfig.value) { // Basic validation for new config
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.InvalidUpdateCustomFilterConfig', {key: filterKey}), origin: 'VideoFilterApplier.updateCustomFilter'});
+      return;
+    }
+
+    SUPPORTED_VIDEO_FILTERS[filterKey] = {
+      ...SUPPORTED_VIDEO_FILTERS[filterKey], // Preserve old properties not in newConfig
+      ...newConfig
+    };
+    
+    this.populateFilterSelect(); // Update UI names
+
+    const currentActiveFilter = this.stateStore.getState()?.currentProject?.videoComposition?.videoFilter;
+    if (currentActiveFilter === filterKey) {
+      this.applyFilter(filterKey); // Re-apply if the active filter is updated
+    }
+    
+    if (publishEvent) {
+        this.eventAggregator.publish(EVENTS.CUSTOM_FILTER_UPDATED, { filterKey, newConfig, timestamp: Date.now() });
+    }
+    this.errorLogger.logInfo({ message: `Custom filter "${filterKey}" updated.`, origin: 'VideoFilterApplier.updateCustomFilter'});
+  }
+
+  /**
+   * Updates the intensity of a filter.
+   * NOTE: This is a complex operation depending on filter value format.
+   * This simplified version assumes `filterConfig.baseValue` and `filterConfig.baseUnit` are defined.
+   * @param {string} filterKey - Key of the filter.
+   * @param {number} intensityValue - New intensity (0-1).
+   */
+  updateFilterIntensity(filterKey, intensityValue) { // intensity 0-1
+    const normalizedIntensity = Math.max(0, Math.min(1, intensityValue));
+    if (!this.isFilterSupported(filterKey)) {
+      this.errorLogger.logWarning({ message: this.localizationService.translate('VideoFilterApplier.InvalidFilterKey', {key: filterKey}), origin: 'VideoFilterApplier.updateFilterIntensity'});
+      return;
+    }
+    
+    const filterConfig = SUPPORTED_VIDEO_FILTERS[filterKey];
+    if (!filterConfig.baseValue || !filterConfig.baseUnit) {
+      this.errorLogger.logInfo({ message: `Filter ${filterKey} not configured for intensity adjustment (missing baseValue/baseUnit). Original value used.`, origin: 'VideoFilterApplier.updateFilterIntensity'});
+      return; // Or apply filter if intensity > 0, none if intensity == 0
+    }
+
+    const newCssNumericValue = filterConfig.baseValue * normalizedIntensity;
+    // Regex to replace the first numeric part inside parentheses. E.g., grayscale(100%) to grayscale(50%)
+    // This regex is basic and might need to be more robust for complex filter values.
+    const newCssFilterValue = filterConfig.value.replace(/(\([^\d]*)[\d\.]+/i, `$1${newCssNumericValue}`);
+
+    // Create a temporary config with the new value for application if active
+    const tempConfigForApplication = { ...filterConfig, value: newCssFilterValue, currentIntensity: normalizedIntensity };
+     
+    // If this filter is currently active, apply the change visually
+    const appState = this.stateStore.getState();
+    if (appState?.currentProject?.videoComposition?.videoFilter === filterKey) {
+        if (this.canvasElement) {
+            this.canvasElement.style.filter = tempConfigForApplication.value;
+        }
+    }
+    // IMPORTANT: This does NOT permanently update SUPPORTED_VIDEO_FILTERS[filterKey].value
+    // To make intensity persistent, it should be stored in stateStore and SUPPORTED_VIDEO_FILTERS
+    // should either store templates or applyFilter should combine base value + state.intensity.
+    // For this final version, it's a visual-only temporary application if active.
+    // To make it persistent, one might:
+    // this.updateCustomFilter(filterKey, { ...filterConfig, value: newCssFilterValue, intensity: normalizedIntensity });
+    // This will re-populate, re-apply, and publish an update event.
+
+    this.eventAggregator.publish(EVENTS.FILTER_INTENSITY_CHANGED, { 
+        filterKey, 
+        intensity: normalizedIntensity,
+        appliedValue: newCssFilterValue, // The CSS value corresponding to this intensity
+        timestamp: Date.now() 
+    });
+  }
+  
+  /**
+   * Updates the overall opacity of the canvas element.
+   * This is NOT filter-specific opacity but the entire element's opacity.
+   * @param {number} opacityValue - New opacity (0-1).
+   */
+  updateCanvasOpacity(opacityValue) { // opacity 0-1
+    const normalizedOpacity = Math.max(0, Math.min(1, opacityValue));
     if (!this.canvasElement) return;
-    
-    // تطبيق المقياس
-    this.canvasElement.style.transform = `scale(${scale})`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_SCALE_CHANGED, {
-      scale,
-      timestamp: Date.now()
+
+    this.canvasElement.style.opacity = String(normalizedOpacity);
+    // The original method included filterKey, which is not relevant for canvas opacity.
+    this.eventAggregator.publish(EVENTS.CANVAS_OPACITY_CHANGED, { /* Consider renaming event from FILTER_OPACITY_CHANGED */
+        opacity: normalizedOpacity,
+        timestamp: Date.now()
     });
   }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} rotation - الزاوية الجديدة
-   */
-  handleFilterRotationChange(rotation) {
-    if (!this.canvasElement) return;
-    
-    // تطبيق الدوران
-    this.canvasElement.style.transform = `rotate(${rotation}deg)`;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ROTATION_CHANGED, {
-      rotation,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} blendMode - وضعية المزج الجديدة
-   */
-  handleFilterBlendModeChange(blendMode) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وضعية المزج
-    this.canvasElement.style.mixBlendMode = blendMode || 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_BLEND_MODE_CHANGED, {
-      blendMode,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} newBlendMode - وضعية المزج الجديدة
-   */
-  handleFilterBlendModeChange(newBlendMode) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وضعية المزج
-    this.canvasElement.style.mixBlendMode = newBlendMode || 'normal';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_BLEND_MODE_CHANGED, {
-      blendMode: newBlendMode,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} direction - اتجاه الفلتر
-   */
-  handleFilterDirectionChange(direction) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} timing - وقت الانتقال
-   */
-  handleFilterTimingChange(timing) {
-    if (!this.canvasElement) return;
-    
-    // تحديث وقت الانتقال
-    this.canvasElement.style.animationTimingFunction = timing || 'linear';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_TIMING_CHANGED, {
-      timing,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {number} iterationCount - عدد التكرار
-   */
-  handleFilterIterationCountChange(iterationCount) {
-    if (!this.canvasElement) return;
-    
-    // تحديث عدد التكرار
-    this.canvasElement.style.animationIterationCount = iterationCount;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_ITERATION_COUNT_CHANGED, {
-      iterationCount,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} direction - اتجاه الفلتر
-   */
-  handleFilterDirectionChange(direction) {
-    if (!this.canvasElement) return;
-    
-    // تحديث اتجاه الفلتر
-    this.canvasElement.style.animationDirection = direction;
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_DIRECTION_CHANGED, {
-      direction,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {boolean} isPlaying - هل الفلتر قيد التشغيل؟
-   */
-  handleFilterPlayStateChange(isPlaying) {
-    if (!this.canvasElement) return;
-    
-    // تحديث حالة التشغيل
-    this.canvasElement.style.animationPlayState = isPlaying ? 'running' : 'paused';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(isPlaying ? EVENTS.FILTER_PLAYING : EVENTS.FILTER_STOPPED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterFinish() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير انتهاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.3s ease-out';
-    this.canvasElement.style.filter = 'none';
-    
-    // إزالة التأثير بعد الانتهاء
-    setTimeout(() => {
-      this.canvasElement.style.transition = '';
-    }, 300);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_FINISHED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   */
-  handleFilterCancel() {
-    if (!this.canvasElement) return;
-    
-    // تطبيق تأثير إلغاء الفلتر
-    this.canvasElement.style.transition = 'filter 0.2s ease-in';
-    this.canvasElement.style.filter = 'none';
-    
-    // إزالة التأثير بعد الانتهاء
-    setTimeout(() => {
-      this.canvasElement.style.transition = '';
-    }, 200);
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_CANCELED, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  handleFilterUpdate(filterKey) {
-    if (!this.isFilterReadyForPlayback(filterKey)) return;
-    
-    // تحديث الفلتر
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    });
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_UPDATED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  handleFilterReset(filterKey) {
-    if (!this.isFilterReadyForPlayback(filterKey)) return;
-    
-    // إعادة تعيين الفلتر
-    const textElements = document.querySelectorAll('[data-verse-text]');
-    textElements.forEach(el => {
-      el.style.filter = 'none';
-    });
-    
-    // تحديث واجهة المستخدم
-    this.filterSelectElement.value = 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_RESET, {
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  handleFilterApply(filterKey) {
-    if (!this.isFilterReadyForPlayback(filterKey)) return;
-    
-    // تطبيق الفلتر
-    this.canvasElement.style.filter = SUPPORTED_VIDEO_FILTERS[filterKey]?.value || 'none';
-    
-    // نشر الحدث
-    this.eventAggregator.publish(EVENTS.FILTER_APPLIED, {
-      filterKey,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * التحقق من حالة التشغيل
-   * @param {string} filterKey - مفتاح الفلتر
-   */
-  handleFilterRemove(filterKey) {
-    if (!this.isFilterReadyForPlayback(filterKey)) return;
-    
-    // إزالة الفلتر
-    this.canvasElement.style.filter = 'none
+}
