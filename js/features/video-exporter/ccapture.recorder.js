@@ -1,312 +1,410 @@
 // js/features/video-exporter/ccapture.recorder.js
-
 import DOMElements from '../../core/dom-elements.js';
 import { ACTIONS, EVENTS, DEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js';
-import fileIOUtils from '../../utils/file.io.utils.js'; // For download
+import fileIOUtils from '../../utils/file.io.utils.js';
 
-// Assume CCapture is loaded globally from CDN
-// const CCapture = window.CCapture;
+/**
+ * @typedef {Object} ExportSettings
+ * @property {string} format - 'webm'|'gif'|'png'|'jpg'
+ * @property {number} fps - Frames per second
+ * @property {string} resolution - e.g., "1920x1080"
+ * @property {number} [quality] - 1-100 for webm/jpg, 1-30 for gif
+ * @property {string} [name] - Optional filename base
+ */
 
 const ccaptureRecorder = (() => {
+  /** @type {CCapture|null} */
   let capturer = null;
   let isRecording = false;
   let recordedFrames = 0;
   let totalFramesToRecord = 0;
   let lastFrameTime = 0;
   let animationFrameId = null;
-
-  // To store injected dependencies
-  let dependencies = {
-    stateStore: { getState: () => ({ currentProject: null }), dispatch: () => {} },
-    errorLogger: console,
-    notificationServiceAPI: { showInfo: () => {}, showSuccess: () => {}, showError: () => {} },
-    mainRendererAPI: { renderFrame: () => {} }, // From initializeMainRenderer
-    eventAggregator: { publish: () => {} }
+  
+  // Worker paths for self-hosting
+  const WORKER_PATHS = {
+    gif: 'js/vendor/ccapture-libs/',
+    default: 'https://cdn.jsdelivr.net/npm/ccapture.js @1.0.0/build/'
   };
 
+  // Dependency injection container
+  const dependencies = {
+    stateStore: { 
+      getState: () => ({ currentProject: null }), 
+      dispatch: () => {} 
+    },
+    errorLogger: console,
+    notificationServiceAPI: { 
+      showInfo: () => {}, 
+      showSuccess: () => {}, 
+      showError: () => {} 
+    },
+    mainRendererAPI: { 
+      renderFrame: async () => {} // Async now
+    },
+    eventAggregator: { 
+      publish: () => {} 
+    }
+  };
 
   /**
-   * Initializes a new CCapture instance based on export settings.
-   * @private
-   * @param {object} exportSettings - From stateStore.currentProject.exportSettings
-   * @param {string} exportSettings.format - 'webm', 'gif', 'png', 'jpg', etc.
-   * @param {number} exportSettings.fps - Frames per second.
-   * @param {string} exportSettings.resolution - e.g., "1920x1080" (used for naming, canvas actual size should be set)
-   * @param {string} [exportSettings.quality] - For GIF or WebM quality.
-   * @param {string} [exportSettings.name] - Optional filename base.
-   * @returns {boolean} True if capturer was initialized, false otherwise.
+   * Initializes CCapture instance with error handling and fallbacks
+   * @param {ExportSettings} exportSettings 
+   * @returns {Promise<boolean>}
    */
-  function _initializeCapturer(exportSettings) {
+  async function _initializeCapturer(exportSettings) {
+    // Auto-load CCapture if not available
     if (typeof window.CCapture === 'undefined') {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        message: 'CCapture.js library is not loaded. Video export will not work.',
-        origin: 'CcaptureRecorder._initializeCapturer',
-        severity: 'error'
-      });
-      dependencies.notificationServiceAPI.showError('مكتبة تصدير الفيديو غير مُحملة.');
+      await _loadCCaptureLibrary();
+    }
+
+    if (typeof window.CCapture === 'undefined') {
+      _handleCriticalError('CCapture.js library failed to load. Video export unavailable.');
       return false;
     }
 
-    const format = exportSettings.format === 'gif' ? 'gif' : 'webm'; // CCapture supports webm, gif, png, jpg sequence
-    let capturerSettings = {
-      format: format,
-      framerate: exportSettings.fps || DEFAULT_PROJECT_SCHEMA.exportSettings.fps,
-      verbose: false, // Set to true for CCapture logs in console
-      display: false, // Shows a UI with progress, set to true if desired.
-      // name: exportSettings.name || `quran_video_${Date.now()}`, // Name for the CCapture instance / download
-      // quality: exportSettings.quality, // 1-100 for webm/jpg, 1-10 for gif
-      // workersPath: 'path/to/ccapture_workers/' // Only needed for GIF worker mode if not using default CDN path
-    };
-    
-    if (format === 'gif') {
-      capturerSettings.workersPath = 'js/vendor/ccapture-libs/'; // Adjust path if you self-host gif.worker.js etc.
-      // Or let CCapture try to load from its default CDN if path is not set or invalid.
-      // Ensure gif.worker.js and NeuQuant.js are accessible if using GIF.
-      if (exportSettings.quality) capturerSettings.quality = parseInt(exportSettings.quality) || 10; // 1-30, lower is better. Default 10.
-    } else if (format === 'webm') {
-      if (exportSettings.quality) capturerSettings.quality = parseInt(exportSettings.quality) || 70; // 0-100, higher is better. Default ~70-80.
-    }
-
-
     try {
-      capturer = new CCapture(capturerSettings);
-      // console.debug('[CcaptureRecorder] CCapture initialized with settings:', capturerSettings);
+      const settings = _buildCapturerSettings(exportSettings);
+      capturer = new window.CCapture(settings);
+      dependencies.eventAggregator.publish(EVENTS.EXPORT_PROGRESS, 0);
       return true;
     } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        error,
-        message: 'Failed to initialize CCapture.js.',
-        origin: 'CcaptureRecorder._initializeCapturer',
-        context: { settings: capturerSettings }
-      });
-      dependencies.notificationServiceAPI.showError('فشل في تهيئة أداة تصدير الفيديو.');
-      capturer = null;
+      _handleCriticalError('CCapture initialization failed', error);
       return false;
     }
   }
 
   /**
-   * The main recording loop. Called by requestAnimationFrame.
-   * Renders a frame, captures it, and requests the next frame.
-   * @private
+   * Builds CCapture settings object with format-specific optimizations
+   * @param {ExportSettings} exportSettings 
+   * @returns {Object}
+   */
+  function _buildCapturerSettings(exportSettings) {
+    const format = ['gif', 'webm', 'png', 'jpg'].includes(exportSettings.format) 
+      ? exportSettings.format 
+      : 'webm';
+
+    const settings = {
+      format,
+      framerate: Math.max(1, Math.min(60, exportSettings.fps || DEFAULT_PROJECT_SCHEMA.exportSettings.fps)),
+      verbose: false,
+      display: false,
+      name: exportSettings.name || `quran_video_${Date.now()}`,
+      workersPath: WORKER_PATHS.gif,
+      fallbackWorkerPath: WORKER_PATHS.default,
+      quality: _calculateQuality(format, exportSettings.quality)
+    };
+
+    // Canvas size adjustment
+    if (exportSettings.resolution?.includes('x')) {
+      const [width, height] = exportSettings.resolution.split('x').map(Number);
+      if (width > 0 && height > 0) {
+        DOMElements.videoPreviewCanvas.width = width;
+        DOMElements.videoPreviewCanvas.height = height;
+      }
+    }
+
+    return settings;
+  }
+
+  /**
+   * Calculates optimal quality based on format
+   * @param {'gif'|'webm'} format 
+   * @param {number} [userQuality]
+   * @returns {number}
+   */
+  function _calculateQuality(format, userQuality) {
+    if (!userQuality) {
+      return format === 'gif' ? 10 : 70;
+    }
+    
+    const numQuality = Math.round(Number(userQuality));
+    if (format === 'gif') {
+      return Math.max(1, Math.min(30, numQuality)); // GIF range: 1-30
+    }
+    return Math.max(1, Math.min(100, numQuality)); // WebM range: 1-100
+  }
+
+  /**
+   * Loads CCapture library dynamically with fallback
+   * @returns {Promise<void>}
+   */
+  function _loadCCaptureLibrary() {
+    return new Promise((resolve, reject) => {
+      if (typeof window.CCapture === 'function') {
+        return resolve();
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/ccapture.js @1.0.0/build/ccapture.min.js';
+      script.onload = resolve;
+      script.onerror = () => {
+        _handleCriticalError('Failed to load CCapture.js from CDN');
+        reject(new Error('CCapture.js load failed'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  /**
+   * Main recording loop with async frame rendering
    */
   async function _recordLoop() {
-    if (!isRecording || !capturer || !DOMElements.videoPreviewCanvas) {
-      stopRecording(false); // Stop if conditions are not met
-      return;
-    }
+    if (!_validateRecordingState()) return;
 
-    // Ensure frame timing according to FPS
-    // This is a simplified way to attempt to match FPS.
-    // CCapture itself handles some timing but requestAnimationFrame is variable.
     const projectState = dependencies.stateStore.getState().currentProject;
-    const targetFps = projectState?.exportSettings?.fps || DEFAULT_PROJECT_SCHEMA.exportSettings.fps;
-    const frameInterval = 1000 / targetFps;
+    const fps = projectState.exportSettings.fps;
+    const frameInterval = 1000 / fps;
     const currentTime = performance.now();
-    const elapsed = currentTime - lastFrameTime;
+    
+    if (currentTime - lastFrameTime >= frameInterval) {
+      try {
+        // Render frame with async/await
+        await dependencies.mainRendererAPI.renderFrame({
+          reason: 'exportFrame',
+          frameNumber: recordedFrames,
+          timestamp: currentTime
+        });
 
-    if (elapsed >= frameInterval) {
-        lastFrameTime = currentTime - (elapsed % frameInterval); // Adjust for a smoother interval
-
-        // 1. Update application state to the current export time/frame
-        // This is CRITICAL. The mainPlaybackController (or a dedicated export sequencer)
-        // needs to advance its state (current Ayah, text effects, etc.)
-        // to what should be rendered at this specific frame/time.
-        // For now, we assume `mainRendererAPI.renderFrame()` can be called
-        // and it renders based on a global "current time" for export if that state exists.
-        // This needs a more robust "export timeline" manager.
-        
-        // Let's simulate advancing time in the project's playback for each frame.
-        // This part is highly dependent on how mainPlaybackController manages its internal timeline.
-        // For now, we'll just re-render the current state from mainRendererAPI.
-        // A proper export needs to tell mainPlaybackController "render the frame for time T".
-        
-        await dependencies.mainRendererAPI.renderFrame({ reason: 'exportFrame', frameNumber: recordedFrames });
-        // We need a small delay or a promise/event from renderFrame to ensure canvas is drawn
-        // before capturing. For now, assume renderFrame is synchronous for drawing.
-        // await new Promise(r => setTimeout(r, 10)); // Small delay if needed, but undesirable
-
-        // 2. Capture the canvas
+        // Capture frame
         capturer.capture(DOMElements.videoPreviewCanvas);
         recordedFrames++;
-
-        // 3. Update progress
-        const progressPercent = Math.min(100, Math.floor((recordedFrames / totalFramesToRecord) * 100));
-        dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
-            percentage: progressPercent,
-            statusMessage: `تسجيل الإطار ${recordedFrames} من ${totalFramesToRecord} (${progressPercent}%)` // Needs localization
-        });
-        dependencies.eventAggregator.publish(EVENTS.EXPORT_PROGRESS, progressPercent);
+        
+        // Update progress
+        const progress = Math.min(100, Math.floor((recordedFrames / totalFramesToRecord) * 100));
+        _updateProgress(progress);
+        
+        lastFrameTime = currentTime;
+      } catch (error) {
+        _handleCriticalError('Frame rendering failed', error);
+        stopRecording(false);
+        return;
+      }
     }
-
 
     if (recordedFrames < totalFramesToRecord) {
       animationFrameId = requestAnimationFrame(_recordLoop);
     } else {
-      // All frames recorded, finalize and save.
-      isRecording = false; // Set before calling stopRecording to avoid race conditions
-      stopRecording(true); // true for save
+      _finalizeRecording();
     }
   }
 
   /**
-   * Starts the video recording process.
-   * @param {number} estimatedTotalDurationSeconds - The total estimated duration of the video to be recorded.
-   *                                                 This is used to calculate totalFramesToRecord.
+   * Validates recording state before proceeding
+   * @returns {boolean}
    */
-  async function startRecording(estimatedTotalDurationSeconds) {
-    if (isRecording) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-        message: 'Recording is already in progress.',
-        origin: 'CcaptureRecorder.startRecording'
-      });
+  function _validateRecordingState() {
+    if (!isRecording || !capturer || !DOMElements.videoPreviewCanvas) {
+      stopRecording(false);
       return false;
     }
-
-    const project = dependencies.stateStore.getState().currentProject;
-    if (!project || !project.exportSettings) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-        message: 'Cannot start recording: No project or export settings found.',
-        origin: 'CcaptureRecorder.startRecording'
-      });
-      dependencies.notificationServiceAPI.showError('لا توجد إعدادات مشروع أو تصدير.');
-      return false;
-    }
-    if (!DOMElements.videoPreviewCanvas) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-          message: "Canvas element not found for recording.", origin: "CcaptureRecorder.startRecording", severity: "error"
-      });
-      return false;
-    }
-    // Ensure canvas has correct dimensions based on export resolution or aspect ratio
-    // This should be handled by canvas.dimension.handler reacting to state.
-    // For export, canvas *drawing buffer* size must match target resolution.
-    // const [exportWidth, exportHeight] = project.exportSettings.resolution.split('x').map(Number);
-    // DOMElements.videoPreviewCanvas.width = exportWidth;
-    // DOMElements.videoPreviewCanvas.height = exportHeight;
-    // dependencies.eventAggregator.publish(EVENTS.REQUEST_CANVAS_RENDER, {reason: "preExportResize"}); // Re-render at new size
-    // await new Promise(r => setTimeout(r, 100)); // Wait for render (not ideal)
-
-
-    if (!_initializeCapturer(project.exportSettings)) {
-      return false; // Initialization failed
-    }
-
-    totalFramesToRecord = Math.ceil(estimatedTotalDurationSeconds * project.exportSettings.fps);
-    if (totalFramesToRecord <= 0) {
-        (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-            message: `Calculated total frames is zero or negative (${totalFramesToRecord}). Cannot start recording. Duration: ${estimatedTotalDurationSeconds}, FPS: ${project.exportSettings.fps}`,
-            origin: 'CcaptureRecorder.startRecording'
-        });
-        dependencies.notificationServiceAPI.showError('لا يمكن بدء التسجيل، مدة الفيديو أو الإطارات غير صالحة.');
-        return false;
-    }
-
-    isRecording = true;
-    recordedFrames = 0;
-    lastFrameTime = performance.now();
-
-    // Reset and prepare mainPlaybackController to start from beginning FOR EXPORT
-    // This is a complex step. The playback controller needs a mode for "export rendering"
-    // where it advances frame by frame instead of real-time.
-    // For now, assume `mainRendererAPI.renderFrame` can render based on some external time state
-    // that we'd manage here for export (e.g., incrementing time by 1/fps each frame).
-    // OR: A dedicated "export sequencer" module would be better.
-    
-    // Dispatch start event and initial progress
-    dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, { percentage: 0, statusMessage: 'بدء التسجيل...' });
-    dependencies.eventAggregator.publish(EVENTS.EXPORT_STARTED);
-    dependencies.notificationServiceAPI.showInfo(`بدء تصدير الفيديو (${totalFramesToRecord} إطار)...`);
-
-    capturer.start();
-    animationFrameId = requestAnimationFrame(_recordLoop);
     return true;
   }
 
   /**
-   * Stops the recording and optionally saves the file.
-   * @param {boolean} [saveFile=true] - Whether to save the recorded file.
+   * Updates export progress in state and UI
+   * @param {number} percentage 
    */
-  function stopRecording(saveFile = true) {
+  function _updateProgress(percentage) {
+    const message = `تسجيل الإطار ${recordedFrames} من ${totalFramesToRecord} (${percentage}%)`;
+    dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
+      percentage,
+      statusMessage: message
+    });
+    dependencies.eventAggregator.publish(EVENTS.EXPORT_PROGRESS, percentage);
+  }
+
+  /**
+   * Finalizes recording and handles file save
+   */
+  function _finalizeRecording() {
+    isRecording = false;
+    capturer.stop();
+    
+    dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
+      percentage: 100,
+      statusMessage: 'جاري إنهاء وحفظ الملف...'
+    });
+
+    dependencies.notificationServiceAPI.showInfo('جاري تجهيز الملف للتنزيل...');
+    
+    capturer.save((blob) => {
+      const project = dependencies.stateStore.getState().currentProject;
+      const filename = _generateFilename(project);
+      
+      fileIOUtils.downloadFile(blob, filename, blob.type);
+      
+      dependencies.notificationServiceAPI.showSuccess(`تم تصدير الفيديو "${filename}" بنجاح!`);
+      dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, null);
+      dependencies.eventAggregator.publish(EVENTS.EXPORT_COMPLETED, { 
+        success: true, 
+        filename 
+      });
+      
+      _cleanup();
+    });
+  }
+
+  /**
+   * Generates a safe filename for export
+   * @param {Object} project 
+   * @returns {string}
+   */
+  function _generateFilename(project) {
+    const base = (project.title || DEFAULT_PROJECT_SCHEMA.title)
+      .replace(/[^a-z0-9أ-ي\s_-]/gi, '')
+      .replace(/\s+/g, '_');
+    
+    const format = project.exportSettings.format === 'gif' ? 'gif' : 'webm';
+    return `${base}_${Date.now()}.${format}`;
+  }
+
+  /**
+   * Handles critical errors with logging and user notifications
+   * @param {string} message 
+   * @param {Error} [error]
+   */
+  function _handleCriticalError(message, error = null) {
+    const errorObj = {
+      message,
+      origin: 'CcaptureRecorder',
+      severity: 'error',
+      ...(error && { error })
+    };
+    
+    (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, errorObj);
+    dependencies.notificationServiceAPI.showError(`حدث خطأ في التسجيل: ${message}`);
+    
+    if (error) {
+      console.error('CCapture Error Details:', error);
+    }
+  }
+
+  /**
+   * Cleans up resources after recording
+   */
+  function _cleanup() {
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
       animationFrameId = null;
     }
+    capturer = null;
+  }
+
+  /**
+   * Starts recording process
+   * @param {number} duration - Estimated duration in seconds
+   * @returns {Promise<boolean>}
+   */
+  async function startRecording(duration) {
+    if (isRecording) return false;
     
-    if (!isRecording && !capturer) return; // Not recording or no capturer (already stopped/failed)
-    if (!capturer) return;
+    const state = dependencies.stateStore.getState();
+    const project = state.currentProject;
+    
+    // Validate prerequisites
+    if (!project || !project.exportSettings) {
+      _handleCriticalError('لا توجد إعدادات مشروع أو تصدير.');
+      return false;
+    }
+    
+    if (!DOMElements.videoPreviewCanvas) {
+      _handleCriticalError('لا يمكن العثور على عنصر Canvas للتسجيل.');
+      return false;
+    }
 
+    // Calculate frames
+    const fps = project.exportSettings.fps;
+    totalFramesToRecord = Math.ceil(duration * fps);
+    
+    if (totalFramesToRecord <= 0) {
+      _handleCriticalError('عدد الإطارات غير صالح.');
+      return false;
+    }
 
-    isRecording = false; // Set flag first
+    // Initialize capturer
+    if (!(await _initializeCapturer(project.exportSettings))) {
+      return false;
+    }
 
+    // Setup state
+    isRecording = true;
+    recordedFrames = 0;
+    lastFrameTime = performance.now();
+
+    // Dispatch events
     dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
-        percentage: 100,
-        statusMessage: saveFile ? 'جاري إنهاء وحفظ الملف...' : 'تم إيقاف التسجيل.'
+      percentage: 0,
+      statusMessage: 'بدء التسجيل...'
     });
+    
+    dependencies.eventAggregator.publish(EVENTS.EXPORT_STARTED);
+    dependencies.notificationServiceAPI.showInfo(`بدء تصدير الفيديو (${totalFramesToRecord} إطار)...`);
 
-    capturer.stop(); // Stop CCapture instance
+    // Start capture
+    capturer.start();
+    animationFrameId = requestAnimationFrame(_recordLoop);
+    
+    return true;
+  }
 
-    if (saveFile) {
-      dependencies.notificationServiceAPI.showInfo('جاري تجهيز الملف للتنزيل...');
-      capturer.save((blob) => {
-        const project = dependencies.stateStore.getState().currentProject;
-        const filenameBase = project?.title || DEFAULT_PROJECT_SCHEMA.title;
-        const exportFormat = project?.exportSettings?.format || DEFAULT_PROJECT_SCHEMA.exportSettings.format;
-        const safeFilename = filenameBase.replace(/[^a-z0-9أ-ي\s_-]/gi, '').replace(/\s+/g, '_');
-        const downloadFilename = `${safeFilename}_${Date.now()}.${exportFormat === 'gif' ? 'gif' : 'webm'}`;
-
-        fileIOUtils.downloadFile(blob, downloadFilename, blob.type);
-        dependencies.notificationServiceAPI.showSuccess(`تم تصدير الفيديو "${downloadFilename}" بنجاح!`);
-        dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, null); // Clear progress
-        dependencies.eventAggregator.publish(EVENTS.EXPORT_COMPLETED, { success: true, filename: downloadFilename });
-        capturer = null; // Release capturer instance
-      });
-    } else {
+  /**
+   * Stops recording process
+   * @param {boolean} [saveFile=true]
+   */
+  function stopRecording(saveFile = true) {
+    _cleanup();
+    
+    if (!capturer) return;
+    
+    isRecording = false;
+    
+    dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
+      percentage: 100,
+      statusMessage: saveFile ? 'جاري إنهاء وحفظ الملف...' : 'تم إيقاف التسجيل.'
+    });
+    
+    capturer.stop();
+    
+    if (!saveFile) {
       dependencies.notificationServiceAPI.showInfo('تم إيقاف تصدير الفيديو.');
-      dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, null);
-      dependencies.eventAggregator.publish(EVENTS.EXPORT_COMPLETED, { success: false, cancelled: true });
-      capturer = null; // Release capturer instance
+      dependencies.eventAggregator.publish(EVENTS.EXPORT_COMPLETED, { 
+        success: false, 
+        cancelled: true 
+      });
+      capturer = null;
     }
   }
-  
-  function _setDependencies(injectedDeps) {
-    if (injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
-    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
-    if (injectedDeps.notificationServiceAPI) dependencies.notificationServiceAPI = injectedDeps.notificationServiceAPI;
-    if (injectedDeps.mainRendererAPI) dependencies.mainRendererAPI = injectedDeps.mainRendererAPI;
-    if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
-  }
 
+  /**
+   * Injects dependencies into the module
+   * @param {Object} injectedDeps 
+   */
+  function _setDependencies(injectedDeps) {
+    Object.keys(dependencies).forEach(key => {
+      if (injectedDeps[key]) dependencies[key] = injectedDeps[key];
+    });
+  }
 
   return {
     _setDependencies,
     startRecording,
-    stopRecording, // Allow manual stop (e.g., cancel button)
-    isRecording: () => isRecording,
+    stopRecording,
+    isRecording: () => isRecording
   };
 })();
 
-
 /**
- * Initialization function for the CcaptureRecorder.
- * @param {object} deps
- * @param {import('../../core/state-store.js').default} deps.stateStore
- * @param {import('../../core/error-logger.js').default} deps.errorLogger
- * @param {import('../../shared-ui-components/notification.presenter.js').ReturnType<initializeNotificationPresenter>} deps.notificationServiceAPI
- * @param {{renderFrame: Function}} deps.mainRendererAPI - API from initializeMainRenderer
- * @param {import('../../core/event-aggregator.js').default} deps.eventAggregator
+ * Initializes the CCapture recorder module
+ * @param {Object} deps 
+ * @returns {Object}
  */
 export function initializeCcaptureRecorder(deps) {
   ccaptureRecorder._setDependencies(deps);
-
-  // This module's primary interaction is via its `startRecording` method.
-  // It doesn't usually have persistent UI elements it manages directly other than responding to a "start export" button.
-
-  // console.info('[CcaptureRecorder] Initialized.');
   return {
     startRecording: ccaptureRecorder.startRecording,
-    stopRecording: ccaptureRecorder.stopRecording, // Expose for a cancel button
-    isRecording: ccaptureRecorder.isRecording,
+    stopRecording: ccaptureRecorder.stopRecording,
+    isRecording: ccaptureRecorder.isRecording
   };
 }
 
