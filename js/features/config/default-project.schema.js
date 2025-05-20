@@ -1,42 +1,96 @@
 // js/features/config/default-project.schema.js
-// أو js/config/default-project.schema.js
-
-// NOTE: This definition should be the single source of truth for default project settings.
-// If DEFAULT_PROJECT_SCHEMA is also defined in app.constants.js, one should import from the other
-// to avoid duplication and inconsistency.
-// Assuming this file is now the primary source for this specific schema.
 
 /**
- * @typedef {import('../project-manager/project.model.js').ProjectModelSchema} ProjectModelSchema
- * // Or define all nested typedefs here as shown in project.model.js previously.
+ * @typedef {Object} QuranSelectionSchema
+ * @property {number} surahId - رقم السورة (1-114)
+ * @property {number} startAyah - بداية الآية
+ * @property {number} endAyah - نهاية الآية
+ * @property {string} reciterId - معرف القارئ
+ * @property {string|null} translationId - معرف الترجمة (إن وجدت)
+ * @property {number} delayBetweenAyahs - تأخير بين الآيات بالثواني
+ * @property {Object} ayahTimings - أوقات الآيات { globalAyahNum: { start, end } }
  */
 
 /**
- * Defines the default structure and values for a new project.
- * This is the "blueprint" for what a project object should contain.
- * @type {ProjectModelSchema} // Ensure this matches the structure expected by the application
+ * @typedef {Object} BackgroundSchema
+ * @property {'color'|'image'|'video'} type - نوع الخلفية
+ * @property {string} source - مصدر الخلفية (لون، URL، أو مسار ملف)
+ * @property {string|null} fileName - اسم ملف الخلفية المستورد
+ * @property {Object} aiSuggestions - اقتراحات الذكاء الاصطناعي
+ * @property {Array} aiSuggestions.photos - صور مقترحة
+ * @property {Array} aiSuggestions.videos - فيديوهات مقترحة
+ * @property {string|null} aiSuggestions.query - آخر استعلام
+ * @property {boolean} aiSuggestions.isLoading - حالة التحميل
+ * @property {string|null} aiSuggestions.error - رسالة الخطأ
+ * @property {number|null} aiSuggestions.timestamp - وقت آخر تحديث
+ */
+
+/**
+ * @typedef {Object} TextStyleSchema
+ * @property {string} fontFamily - خط النص
+ * @property {number} fontSize - حجم الخط بالبكسل
+ * @property {string} fontColor - لون الخط
+ * @property {string} textBgColor - لون خلفية النص
+ * @property {'none'|'fade'|'typewriter'} textAnimation - نوع الحركة
+ * @property {string} [translationFontFamily] - خط الترجمة (إن وجد)
+ * @property {number} [translationFontSizeRatio] - نسبة حجم خط الترجمة
+ */
+
+/**
+ * @typedef {Object} VideoCompositionSchema
+ * @property {string} aspectRatio - نسبة العرض إلى الارتفاع (مثال: '9:16')
+ * @property {'none'|'grayscale'|'sepia'|'invert'} videoFilter - مرشح الفيديو
+ */
+
+/**
+ * @typedef {Object} ExportSettingsSchema
+ * @property {string} resolution - الدقة (مثال: '1920x1080')
+ * @property {'webm'|'mp4'|'gif'} format - صيغة التصدير
+ * @property {number} fps - عدد الإطارات في الثانية
+ * @property {number} [quality] - جودة التصدير (مثال: 1-100 للـ webm)
+ */
+
+/**
+ * @typedef {Object} ProjectModelSchema
+ * @property {string|null} id - معرف المشروع (يتم إنشاؤه عند التخزين)
+ * @property {string} title - عنوان المشروع
+ * @property {number} createdAt - وقت الإنشاء (ملي ثانية)
+ * @property {number} updatedAt - وقت آخر تحديث (ملي ثانية)
+ * @property {QuranSelectionSchema} quranSelection - خيارات القرآن
+ * @property {BackgroundSchema} background - إعدادات الخلفية
+ * @property {TextStyleSchema} textStyle - إعدادات نمط النص
+ * @property {VideoCompositionSchema} videoComposition - إعدادات الفيديو
+ * @property {ExportSettingsSchema} exportSettings - إعدادات التصدير
+ * @property {boolean} [isDirty] - هل هناك تغييرات غير محفوظة
+ * @property {Object} [audioSettings] - إعدادات الصوت (اختياري)
+ * @property {Object} [transitions] - إعدادات الانتقالات (اختياري)
+ */
+
+/**
+ * يحدد هيكل القيم الافتراضية لمشروع جديد
+ * @type {ProjectModelSchema}
  */
 export const DEFAULT_PROJECT_SCHEMA = {
-  id: null, // Will be generated at creation time
-  title: 'مشروع جديد', // Default title (can be localized via appSettings or project creation logic)
-  createdAt: 0, // Will be set to Date.now() at creation
-  updatedAt: 0, // Will be set to Date.now() at creation
+  id: null, // سيتم إنشاؤه عند التخزين
+  title: 'مشروع جديد', // العنوان الافتراضي (يمكن ترجمته حسب إعدادات التطبيق)
+  createdAt: 0, // سيتم تعيينه إلى Date.now() عند الإنشاء
+  updatedAt: 0, // سيتم تعيينه إلى Date.now() عند الإنشاء
 
   quranSelection: {
-    surahId: 1,             // Default: Al-Fatiha
+    surahId: 1,             // السورة الافتراضية: الفاتحة
     startAyah: 1,
     endAyah: 7,
-    reciterId: 'ar.alafasy', // A common default, ensure this ID exists in your reciters list
-    translationId: null,     // No translation by default
-    delayBetweenAyahs: 1.0,  // Seconds
-    ayahTimings: {},         // To store { globalAyahNum: { start, end } } if fetched/calculated
+    reciterId: 'ar.alafasy', // القارئ الافتراضي (تأكد من وجوده في قائمة القراء)
+    translationId: null,     // لا توجد ترجمة افتراضية
+    delayBetweenAyahs: 1.0,  // تأخير بين الآيات بالثواني
+    ayahTimings: {},         // لتخزين أوقات الآيات { globalAyahNum: { start, end } }
   },
 
   background: {
     type: 'color',                  // 'color', 'image', 'video'
-    source: '#0D0D0D',              // Default dark background color
-    fileName: null,                 // Name of imported file
-    aiSuggestions: {                // State for AI suggestions
+    source: '#0D0D0D',              // لون خلفية افتراضي (أسود داكن)
+    fileName: null,                 // اسم ملف الخلفية المستورد
+    aiSuggestions: {                // حالة اقتراحات الذكاء الاصطناعي
       photos: [],
       videos: [],
       query: null,
@@ -47,54 +101,146 @@ export const DEFAULT_PROJECT_SCHEMA = {
   },
 
   textStyle: {
-    fontFamily: "'Amiri Quran', serif", // Default Quran font
-    fontSize: 48,                       // Pixels
-    fontColor: '#FFFFFF',               // White text
-    textBgColor: 'rgba(0,0,0,0.3)',   // Semi-transparent black background for text
-    textAnimation: 'fade',              // 'none', 'fade', 'typewriter', etc.
-    // translationFontFamily: "'Tajawal', sans-serif", // Example if separate
-    // translationFontSizeRatio: 0.6,
+    fontFamily: "'Amiri Quran', serif", // خط القرآن الافتراضي
+    fontSize: 48,                       // حجم الخط بالبكسل
+    fontColor: '#FFFFFF',               // لون الخط الأبيض
+    textBgColor: 'rgba(0,0,0,0.3)',   // خلفية نص شبه شفافة
+    textAnimation: 'fade',              // الحركة الافتراضية: التلاشي
   },
 
   videoComposition: {
-    aspectRatio: '9:16',        // Default to portrait for social media (e.g., Shorts, Reels)
-    videoFilter: 'none',          // No filter by default
+    aspectRatio: '9:16',        // افتراضي: عمودي للمحتوى الاجتماعي (مثل Shorts, Reels)
+    videoFilter: 'none',        // لا يوجد مرشح افتراضي
   },
 
   exportSettings: {
-    resolution: '1920x1080',    // Full HD
-    format: 'webm',             // WebM is good quality/size, supported by CCapture for video
-    fps: 25,                    // Common frame rate
-    // quality: 75, // Optional, specific to format (e.g., 0-100 for webm, 1-30 for gif)
+    resolution: '1920x1080',    // دقة Full HD
+    format: 'webm',             // صيغة WebM (جودة/حجم جيدة، مدعومة من CCapture)
+    fps: 25,                    // معدل الإطارات الشائع
+    quality: 75,                // الجودة الافتراضية للـ webm
   },
 
-  // isDirty: false, // Optional flag for unsaved changes, managed by project logic
-
-  // Add other project-specific default settings as your application grows
-  // For example:
-  // audioSettings: {
-  //   mainVolume: 1.0,
-  //   backgroundMusicVolume: 0.5, // If background music feature is added
-  //   backgroundMusicLoop: true,
-  //   backgroundMusicFile: null
-  // },
-  // transitions: {
-  //   betweenAyahs: 'none', // 'none', 'fade', 'slide'
-  //   durationMs: 500
-  // }
+  // isDirty: false, // علامة اختيارية لتتبع التغييرات غير المحفوظة (يتم إدارتها منطقيًا)
 };
 
 /**
- * Initialization function (placeholder for consistency with moduleBootstrap if used).
- * This module typically only exports the schema object.
- * @param {object} [dependencies] - Optional dependencies.
+ * التحقق من صحة مشروع القرآن
+ * @param {ProjectModelSchema} project - المشروع المراد التحقق منه
+ * @returns {boolean} - true إذا كان المشروع صالحًا
  */
-export function initializeDefaultProjectSchema(dependencies = {}) {
-  // console.info('[DefaultProjectSchema] Initialized (provides default project structure).');
-  return {
-    DEFAULT_PROJECT_SCHEMA: JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA)) // Return a clone
-  };
+export function validateProjectSchema(project) {
+  // التحقق من وجود المشروع
+  if (!project) return false;
+  
+  // التحقق من السورة
+  if (typeof project.quranSelection.surahId !== 'number' || 
+      project.quranSelection.surahId < 1 || 
+      project.quranSelection.surahId > 114) {
+    return false;
+  }
+  
+  // التحقق من الآيات
+  if (typeof project.quranSelection.startAyah !== 'number' || 
+      typeof project.quranSelection.endAyah !== 'number' ||
+      project.quranSelection.startAyah < 1 || 
+      project.quranSelection.endAyah < project.quranSelection.startAyah) {
+    return false;
+  }
+  
+  // التحقق من نوع الخلفية
+  if (!['color', 'image', 'video'].includes(project.background.type)) {
+    return false;
+  }
+  
+  // التحقق من حجم الخط
+  if (typeof project.textStyle.fontSize !== 'number' || 
+      project.textStyle.fontSize < 12 || 
+      project.textStyle.fontSize > 100) {
+    return false;
+  }
+  
+  // التحقق من نسبة العرض إلى الارتفاع
+  if (!/^\d+:\d+$/.test(project.videoComposition.aspectRatio)) {
+    return false;
+  }
+  
+  // التحقق من صيغة التصدير
+  if (!['webm', 'mp4', 'gif'].includes(project.exportSettings.format)) {
+    return false;
+  }
+  
+  // التحقق من الدقة
+  if (!/^\d+x\d+$/.test(project.exportSettings.resolution)) {
+    return false;
+  }
+  
+  // التحقق من FPS
+  if (typeof project.exportSettings.fps !== 'number' || 
+      project.exportSettings.fps < 1 || 
+      project.exportSettings.fps > 60) {
+    return false;
+  }
+  
+  // التحقق من الجودة
+  if (typeof project.exportSettings.quality !== 'number' ||
+      (project.exportSettings.format === 'webm' && 
+       (project.exportSettings.quality < 1 || project.exportSettings.quality > 100)) ||
+      (project.exportSettings.format === 'gif' && 
+       (project.exportSettings.quality < 1 || project.exportSettings.quality > 30))) {
+    return false;
+  }
+  
+  // التحقق من مرشح الفيديو
+  if (!['none', 'grayscale', 'sepia', 'invert'].includes(project.videoComposition.videoFilter)) {
+    return false;
+  }
+  
+  return true;
 }
 
-// Primarily, other modules will import DEFAULT_PROJECT_SCHEMA directly.
-// No default export for the module object itself needed usually.
+/**
+ * إنشاء مشروع جديد بناءً على المخطط القياسي
+ * @returns {ProjectModelSchema} - مشروع جديد
+ */
+export function createNewProject() {
+  const newProject = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
+  const now = Date.now();
+  
+  newProject.id = `project_${now}`;
+  newProject.createdAt = now;
+  newProject.updatedAt = now;
+  
+  return newProject;
+}
+
+/**
+ * تهيئة مكون المخطط القياسي للمشروع
+ * @param {Object} [dependencies] - التبعيات الاختيارية
+ * @returns {Object} - الكائن النهائي للمخطط
+ */
+export function initializeDefaultProjectSchema(dependencies = {}) {
+  const { errorLogger } = dependencies;
+  
+  try {
+    console.info('[DefaultProjectSchema] تم تهيئته بنجاح');
+    
+    return {
+      DEFAULT_PROJECT_SCHEMA: JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA)),
+      validateProjectSchema,
+      createNewProject
+    };
+  } catch (error) {
+    if (errorLogger) {
+      errorLogger.logError(error, 'DefaultProjectSchema initialization failed');
+    } else {
+      console.error('[DefaultProjectSchema] فشل في التهيئة:', error);
+    }
+    
+    // العودة إلى المخطط القياسي في حالة الفشل
+    return {
+      DEFAULT_PROJECT_SCHEMA: JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA)),
+      validateProjectSchema: () => true,
+      createNewProject: () => JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA))
+    };
+  }
+}
