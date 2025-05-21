@@ -1,11 +1,15 @@
 // js/features/video-exporter/ccapture.recorder.js
-// افترض أن هذه الـ imports موجودة أو يتم حقنها عبر dependencies
-import ImportedDOMElements from '../../core/dom-elements.js'; // سميته ImportedDOMElements للوضوح هنا
-import { ACTIONS, EVENTS, DEFAULT_PROJECT_SCHEMA as ImportedDEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js';
-import fileIOUtils from '../../utils/file.io.utils.js'; // افترض وجوده
+
+// --- إزالة الاستيرادات المباشرة للاعتماديات التي سيتم حقنها ---
+// import ImportedDOMElements from '../../core/dom-elements.js'; 
+// import { DEFAULT_PROJECT_SCHEMA as ImportedDEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js';
+// import fileIOUtils from '../../utils/file.io.utils.js'; // هذا قد يبقى إذا كان file.io.utils لا يتم حقنه
+
+// استيراد الثوابت فقط إذا كانت ضرورية هنا
+import { ACTIONS, EVENTS } from '../../config/app.constants.js';
 
 
-const ccaptureRecorder = (() => {
+const ccaptureRecorderInternal = (() => { // تم تغيير الاسم لـ Internal للإشارة إلى IIFE
   let capturer = null;
   let isRecording = false;
   let recordedFrames = 0;
@@ -14,71 +18,50 @@ const ccaptureRecorder = (() => {
   let animationFrameId = null;
   
   const WORKER_PATHS = {
-    gif: 'https://cdn.jsdelivr.net/npm/ccapture.js@1.1.0/build/', // تم تحديثه لـ 1.1.0 كما في index.html
+    gif: 'https://cdn.jsdelivr.net/npm/ccapture.js@1.1.0/build/',
     default: 'https://cdn.jsdelivr.net/npm/ccapture.js@1.1.0/build/'
   };
 
-  // Dependency injection container (سنفترض أن هذه هي الطريقة التي يتم بها تمرير الاعتماديات)
-  // أو أنها ستكون imports مباشرة في أعلى الملف
-  const dependencies = {
-    DOMElements: ImportedDOMElements, // افترض أنه يتم حقنه هكذا، أو استخدم ImportedDOMElements مباشرة
-    DEFAULT_PROJECT_SCHEMA: ImportedDEFAULT_PROJECT_SCHEMA,
-    stateStore: { 
-      getState: () => ({ currentProject: { exportSettings: { fps: 30, resolution: "1280x720", format: "webm" }, title: "Test Project" } }), // بيانات افتراضية للتشغيل
-      dispatch: (action, payload) => console.log('StateStore Dispatch:', action, payload) 
-    },
-    errorLogger: { 
-        handleError: (errObj) => console.error("Logged Error:", errObj.message, errObj.error || '', errObj),
-        error: (errObj) => console.error("Logged Error (Direct):", errObj.message, errObj.error || '', errObj), // للاستخدام المباشر
-        warn: (warnObj) => console.warn("Logged Warning:", warnObj.message, warnObj)
-    },
-    notificationServiceAPI: { 
-      showInfo: (msg) => console.info('Notification (Info):', msg), 
-      showSuccess: (msg) => console.info('Notification (Success):', msg), 
-      showError: (msg) => console.error('Notification (Error):', msg) 
-    },
-    mainRendererAPI: { 
-      renderFrame: async (opts) => { /* console.log('Simulating renderFrame:', opts); */ } 
-    },
-    eventAggregator: { 
-      publish: (event, payload) => console.log('Event Aggregator Publish:', event, payload) 
-    }
+  // كائن لتخزين الاعتماديات المحقونة
+  let deps = {
+    DOMElements: null,
+    DEFAULT_PROJECT_SCHEMA: null,
+    stateStore: null,
+    errorLogger: console, // قيمة افتراضية
+    notificationServiceAPI: { showInfo: console.info, showSuccess: console.info, showError: console.error },
+    mainRendererAPI: { renderFrame: async () => {} },
+    eventAggregator: { publish: console.log },
+    fileIOUtils: null // سيتم حقنه
   };
 
   function _handleCriticalError(message, error = null) {
-    const errorObj = {
-      message,
-      origin: 'CcaptureRecorder',
-      severity: 'error',
-      ...(error && { error })
-    };
-    
-    (dependencies.errorLogger.handleError || dependencies.errorLogger.error || console.error).call(dependencies.errorLogger, errorObj);
-    dependencies.notificationServiceAPI.showError(`حدث خطأ في التسجيل: ${message}`);
-    
-    if (error) {
-      // console.error('CCapture Error Details:', error); // مكرر إذا كان errorLogger يعرضه
+    const errorObj = { message, origin: 'CcaptureRecorder', severity: 'error', ...(error && { error }) };
+    if (deps.errorLogger && typeof deps.errorLogger.handleError === 'function') {
+      deps.errorLogger.handleError(errorObj);
+    } else if (deps.errorLogger && typeof deps.errorLogger.error === 'function') {
+      deps.errorLogger.error(errorObj);
+    } else {
+      console.error(errorObj.message, errorObj.error || '');
     }
+    deps.notificationServiceAPI?.showError?.(`خطأ في التسجيل: ${message}`);
   }
 
   function _loadCCaptureLibrary() {
     return new Promise((resolve, reject) => {
       if (typeof window.CCapture === 'function') {
-        console.log('CCapture.js already loaded.');
+        deps.errorLogger.info?.({message:'CCapture.js already loaded.', origin: 'CcaptureRecorder'});
         return resolve();
       }
-      console.log('Attempting to load CCapture.js from CDN...');
+      deps.errorLogger.info?.({message:'Attempting to load CCapture.js from CDN...', origin: 'CcaptureRecorder'});
       const script = document.createElement('script');
-      // script.src = 'https://cdn.jsdelivr.net/npm/ccapture.js @1.0.0/build/ccapture.min.js'; // الرابط القديم
-      script.src = 'https://cdn.jsdelivr.net/npm/ccapture.js@1.1.0/build/CCapture.all.min.js'; // الرابط من index.html
+      script.src = 'https://cdn.jsdelivr.net/npm/ccapture.js@1.1.0/build/CCapture.all.min.js';
       script.onload = () => {
-        console.log('CCapture.js loaded successfully from CDN.');
+        deps.errorLogger.info?.({message:'CCapture.js loaded successfully from CDN.', origin: 'CcaptureRecorder'});
         resolve();
       };
-      script.onerror = () => {
+      script.onerror = (err) => {
         const errorMsg = 'Failed to load CCapture.js from CDN';
-        console.error(errorMsg);
-        // لا تستدعي _handleCriticalError هنا مباشرة لأنها قد لا تكون مهيئة بالكامل
+        deps.errorLogger.error?.({message: errorMsg, error: err, origin: 'CcaptureRecorder'});
         reject(new Error(errorMsg));
       };
       document.head.appendChild(script);
@@ -86,15 +69,11 @@ const ccaptureRecorder = (() => {
   }
   
   function _calculateQuality(format, userQuality) {
-    if (userQuality === undefined || userQuality === null) { // تحقق أدق
+    if (userQuality === undefined || userQuality === null) {
       return format === 'gif' ? 10 : 70;
     }
-    
     const numQuality = Math.round(Number(userQuality));
-    if (format === 'gif') {
-      return Math.max(1, Math.min(30, numQuality));
-    }
-    return Math.max(1, Math.min(100, numQuality));
+    return format === 'gif' ? Math.max(1, Math.min(30, numQuality)) : Math.max(1, Math.min(100, numQuality));
   }
 
   function _buildCapturerSettings(exportSettings) {
@@ -102,22 +81,22 @@ const ccaptureRecorder = (() => {
       ? exportSettings.format 
       : 'webm';
 
-    // --- بداية التعديل الهام ---
-    // الوصول إلى DOMElements من خلال dependencies أو الاستيراد المباشر
-    const DOMElems = dependencies.DOMElements || ImportedDOMElements; 
-    if (!DOMElems || !DOMElems.previews?.canvas || !(DOMElems.previews.canvas instanceof HTMLCanvasElement)) {
-        const errorMsg = "DOMElements.previews.canvas is not a valid canvas element or DOMElements not initialized correctly.";
-        console.error(errorMsg);
-        // لا تستدعي _handleCriticalError هنا إذا كانت هي نفسها تعتمد على dependencies قد لا تكون مهيئة
-        // ارمي الخطأ ليتم التقاطه في _initializeCapturer
+    // ---!!! بداية التعديل الحاسم !!!---
+    if (!deps.DOMElements || !deps.DOMElements.previews?.canvas || !(deps.DOMElements.previews.canvas instanceof HTMLCanvasElement)) {
+        const errorMsg = "DOMElements.previews.canvas is not a valid canvas element or DOMElements not (properly) injected/initialized.";
+        // لا تستدعي _handleCriticalError مباشرة هنا، بل ارمي الخطأ ليتم التعامل معه في _initializeCapturer
         throw new Error(errorMsg); 
     }
-    const canvasElement = DOMElems.previews.canvas;
-    // --- نهاية التعديل الهام ---
+    const canvasElement = deps.DOMElements.previews.canvas;
+    // ---!!! نهاية التعديل الحاسم !!!---
+
+    if (!deps.DEFAULT_PROJECT_SCHEMA?.exportSettings?.fps) {
+        throw new Error("DEFAULT_PROJECT_SCHEMA or its exportSettings.fps is not available via dependencies.");
+    }
 
     const settings = {
       format,
-      framerate: Math.max(1, Math.min(60, exportSettings.fps || dependencies.DEFAULT_PROJECT_SCHEMA.exportSettings.fps)),
+      framerate: Math.max(1, Math.min(60, exportSettings.fps || deps.DEFAULT_PROJECT_SCHEMA.exportSettings.fps)),
       verbose: true, 
       display: false,
       name: exportSettings.name || `quran_video_${Date.now()}`,
@@ -128,16 +107,14 @@ const ccaptureRecorder = (() => {
     if (exportSettings.resolution?.includes('x')) {
       const [width, height] = exportSettings.resolution.split('x').map(Number);
       if (width > 0 && height > 0) {
-        // --- بداية التعديل الهام ---
+        // ---!!! بداية التعديل الحاسم !!!---
         canvasElement.width = width;
         canvasElement.height = height;
-        // --- نهاية التعديل الهام ---
-        console.log(`Canvas dimensions set by exportSettings to: ${canvasElement.width}x${canvasElement.height}`);
+        // ---!!! نهاية التعديل الحاسم !!!---
+        deps.errorLogger.info?.({message: `Canvas dimensions set by exportSettings to: ${canvasElement.width}x${canvasElement.height}`, origin: 'CcaptureRecorder'});
       }
     } else {
-        // إذا لم تحدد دقة التصدير، استخدم أبعاد الـ canvas الحالية
-        // أو يمكنك إجبارها على قيمة افتراضية من DOMElements إن لم تكن قد تم تغييرها بعد
-        console.warn(`Export resolution not specified. Using current canvas dimensions: ${canvasElement.width}x${canvasElement.height}`);
+        deps.errorLogger.warn?.({message:`Export resolution not specified. Using current canvas dimensions: ${canvasElement.width}x${canvasElement.height}`, origin: 'CcaptureRecorder'});
     }
     return settings;
   }
@@ -147,37 +124,34 @@ const ccaptureRecorder = (() => {
       try {
         await _loadCCaptureLibrary();
       } catch (e) {
-        _handleCriticalError(e.message || 'CCapture.js library failed to load. Video export unavailable.');
+        _handleCriticalError(e.message || 'CCapture.js library failed to load.', e);
         return false;
       }
     }
 
-    if (typeof window.CCapture === 'undefined') { // تحقق مرة أخرى
+    if (typeof window.CCapture === 'undefined') {
       _handleCriticalError('CCapture.js library still not available after load attempt.');
       return false;
     }
 
     try {
-      console.log("Attempting to initialize CCapture with project export settings:", exportSettings);
-      const settings = _buildCapturerSettings(exportSettings); // استدعاء دالة بناء الإعدادات
-      console.log("Built CCapture settings for new CCapture():", settings);
+      deps.errorLogger.info?.({message: "Attempting to initialize CCapture with project export settings", context: exportSettings, origin: 'CcaptureRecorder'});
+      const settings = _buildCapturerSettings(exportSettings); 
+      deps.errorLogger.info?.({message: "Built CCapture settings for new CCapture()", context: settings, origin: 'CcaptureRecorder'});
       
       capturer = new window.CCapture(settings);
       
       if (!capturer || typeof capturer.start !== 'function') {
         const errorMsg = "CCapture initialization failed or returned an invalid object.";
-        console.error(errorMsg, "Capturer object:", capturer);
-        _handleCriticalError(errorMsg);
+        _handleCriticalError(errorMsg, { capturerObject: capturer }); // تمرير الكائن للفحص
         capturer = null;
         return false;
       }
       
-      console.log("CCapture instance created successfully:", capturer);
-      dependencies.eventAggregator.publish(EVENTS.EXPORT_PROGRESS, 0);
+      deps.errorLogger.info?.({message: "CCapture instance created successfully.", context: capturer, origin: 'CcaptureRecorder'});
+      deps.eventAggregator?.publish(EVENTS.EXPORT_PROGRESS, 0);
       return true;
     } catch (error) {
-      // _buildCapturerSettings قد ترمي خطأ إذا كان الـ canvas غير صالح
-      console.error("Error during CCapture initialization (new CCapture() or _buildCapturerSettings):", error);
       _handleCriticalError(error.message || 'CCapture initialization threw an error', error);
       capturer = null;
       return false;
@@ -185,14 +159,10 @@ const ccaptureRecorder = (() => {
   }
 
   function _validateRecordingState() {
-    // --- بداية التعديل الهام ---
-    const DOMElems = dependencies.DOMElements || ImportedDOMElements;
-    if (!isRecording || !capturer || !DOMElems.previews?.canvas) {
-      console.warn("Validation failed: Not recording, or no capturer, or no canvas.", 
-                   {isRecording, capturerExists: !!capturer, canvasExists: !!DOMElems.previews?.canvas });
-    // --- نهاية التعديل الهام ---
-      // stopRecording(false); // استدعاء stopRecording هنا قد يسبب حلقة إذا كان هو السبب
-      _cleanup(); // تنظيف مباشر
+    if (!isRecording || !capturer || !deps.DOMElements?.previews?.canvas) {
+      deps.errorLogger.warn?.({message:"Validation failed for recording state.", 
+                   context: {isRecording, capturerExists: !!capturer, canvasExists: !!deps.DOMElements?.previews?.canvas }, origin: 'CcaptureRecorder' });
+      _cleanup(); 
       return false;
     }
     return true;
@@ -200,40 +170,44 @@ const ccaptureRecorder = (() => {
 
   function _updateProgress(percentage) {
     const message = `تسجيل الإطار ${recordedFrames} من ${totalFramesToRecord} (${percentage}%)`;
-    dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
-      percentage,
-      statusMessage: message
-    });
-    dependencies.eventAggregator.publish(EVENTS.EXPORT_PROGRESS, percentage);
+    deps.stateStore?.dispatch(ACTIONS.SET_EXPORT_PROGRESS, { percentage, statusMessage: message });
+    deps.eventAggregator?.publish(EVENTS.EXPORT_PROGRESS, percentage);
   }
 
   async function _recordLoop() {
     if (!_validateRecordingState()) return;
 
-    const projectState = dependencies.stateStore.getState().currentProject;
-    // افترض أن exportSettings دائمًا موجودة إذا بدأ التسجيل
+    const projectState = deps.stateStore?.getState?.().currentProject;
+    if (!projectState?.exportSettings?.fps) {
+        _handleCriticalError("Project state or export settings (FPS) are invalid in _recordLoop.");
+        _cleanup();
+        return;
+    }
     const fps = projectState.exportSettings.fps;
     const frameInterval = 1000 / fps;
     const currentTime = performance.now();
     
     if (currentTime - lastFrameTime >= frameInterval) {
       try {
-        await dependencies.mainRendererAPI.renderFrame({
+        if (!deps.mainRendererAPI || typeof deps.mainRendererAPI.renderFrame !== 'function') {
+            throw new Error("mainRendererAPI.renderFrame is not available.");
+        }
+        await deps.mainRendererAPI.renderFrame({
           reason: 'exportFrame',
           frameNumber: recordedFrames,
           timestamp: currentTime
         });
         
-        // --- بداية التعديل الهام ---
-        const DOMElems = dependencies.DOMElements || ImportedDOMElements;
-        const canvasToCapture = DOMElems.previews.canvas;
-        if (!canvasToCapture) { // تحقق إضافي هنا رغم وجوده في _validateRecordingState
-            _handleCriticalError("Canvas element became null during _recordLoop.");
-            _cleanup(); // أو stopRecording(false)
-            return;
+        // ---!!! بداية التعديل الحاسم !!!---
+        const canvasToCapture = deps.DOMElements.previews.canvas; // يفترض أنه تم التحقق منه في _validateRecordingState
+        // لكن تحقق سريع هنا أيضًا
+        if (!canvasToCapture) {
+             _handleCriticalError("DOMElements.previews.canvas became unavailable during _recordLoop.");
+             _cleanup();
+             return;
         }
         capturer.capture(canvasToCapture);
-        // --- نهاية التعديل الهام ---
+        // ---!!! نهاية التعديل الحاسم !!!---
         recordedFrames++;
         
         const progress = Math.min(100, Math.floor((recordedFrames / totalFramesToRecord) * 100));
@@ -242,8 +216,8 @@ const ccaptureRecorder = (() => {
         lastFrameTime = currentTime;
       } catch (error) {
         _handleCriticalError('Frame rendering or capture failed in _recordLoop', error);
-        stopRecording(false); // هذا سينظف animationFrameId
-        return; // توقف عن الحلقة
+        stopRecordingInternal(false); // استخدم النسخة الداخلية من stopRecording
+        return; 
       }
     }
 
@@ -255,232 +229,212 @@ const ccaptureRecorder = (() => {
   }
 
   function _generateFilename(project) {
-    const base = (project.title || dependencies.DEFAULT_PROJECT_SCHEMA.title)
+    if (!project || !deps.DEFAULT_PROJECT_SCHEMA?.title) { // تحقق من وجود project و DEFAULT_PROJECT_SCHEMA
+        _handleCriticalError("Cannot generate filename: project or DEFAULT_PROJECT_SCHEMA is missing.");
+        return `fallback_video_${Date.now()}.webm`; // اسم احتياطي
+    }
+    const base = (project.title || deps.DEFAULT_PROJECT_SCHEMA.title)
       .replace(/[^a-z0-9أ-ي\s_-]/gi, '')
       .replace(/\s+/g, '_');
     
-    const format = project.exportSettings.format === 'gif' ? 'gif' : (project.exportSettings.format === 'png' ? 'tar' : project.exportSettings.format);
-    // CCapture يحفظ PNGs كـ tar
-    const extension = format === 'tar' ? 'tar' : (format === 'jpg' ? 'tar' : format); // و JPG كـ tar
+    // تأكد أن project.exportSettings.format موجود
+    const format = project.exportSettings?.format === 'gif' ? 'gif' : 
+                   (project.exportSettings?.format === 'png' ? 'tar' : 
+                   (project.exportSettings?.format === 'jpg' ? 'tar' : project.exportSettings?.format || 'webm'));
+
+    const extension = format === 'tar' ? 'tar' : format;
     return `${base}_${Date.now()}.${extension}`;
   }
 
   function _finalizeRecording() {
     if (!capturer) {
-      console.warn("_finalizeRecording called but capturer is null.");
-      _cleanup(); // تأكد من التنظيف
+      deps.errorLogger.warn?.({message:"_finalizeRecording called but capturer is null.", origin: 'CcaptureRecorder'});
+      _cleanup();
       return;
     }
-    isRecording = false; // يجب أن يتم قبل capturer.stop() في بعض الحالات لتجنب استدعاءات إضافية
-    if (animationFrameId) { // ضمان إيقاف الحلقة قبل استدعاء stop
+    isRecording = false; 
+    if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
     }
 
-    capturer.stop(); // يجب أن يكون قبل save لتجهيز الملف
+    capturer.stop(); 
     
-    dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
-      percentage: 100,
-      statusMessage: 'جاري إنهاء وحفظ الملف...'
-    });
-    dependencies.notificationServiceAPI.showInfo('جاري تجهيز الملف للتنزيل...');
+    deps.stateStore?.dispatch(ACTIONS.SET_EXPORT_PROGRESS, { percentage: 100, statusMessage: 'جاري إنهاء وحفظ الملف...'});
+    deps.notificationServiceAPI?.showInfo('جاري تجهيز الملف للتنزيل...');
     
     capturer.save((blob) => {
       if (!blob) {
-        _handleCriticalError("Failed to save: blob is null. Recording might have failed silently.");
+        _handleCriticalError("Failed to save: blob is null.");
         _cleanup();
-        dependencies.eventAggregator.publish(EVENTS.EXPORT_COMPLETED, { success: false, error: "Blob is null" });
+        deps.eventAggregator?.publish(EVENTS.EXPORT_COMPLETED, { success: false, error: "Blob is null" });
         return;
       }
-      const project = dependencies.stateStore.getState().currentProject;
+      const project = deps.stateStore?.getState?.().currentProject;
+      if (!project) {
+          _handleCriticalError("Cannot get project state to generate filename after saving blob.");
+          // حاول حفظ الملف باسم عام إذا فشلت كل المحاولات
+          const fallbackFilename = `recorded_video_${Date.now()}.webm`; // افترض webm إذا لم يعرف format
+          if (typeof saveAs === 'function') { saveAs(blob, fallbackFilename); }
+          _cleanup();
+          return;
+      }
       const filename = _generateFilename(project);
       
-      // fileIOUtils.downloadFile(blob, filename, blob.type); // افترض أن هذه الدالة موجودة
-      // كحل بديل لـ fileIOUtils إذا لم يكن معرفًا، استخدم FileSaver.js إذا كانت متوفرة
-      if (typeof saveAs === 'function') { // مكتبة FileSaver.js
+      if (deps.fileIOUtils && typeof deps.fileIOUtils.downloadFile === 'function') {
+        deps.fileIOUtils.downloadFile(blob, filename, blob.type);
+      } else if (typeof saveAs === 'function') { // مكتبة FileSaver.js كـ fallback (إذا كانت محملة عالميًا)
         saveAs(blob, filename);
-      } else if (fileIOUtils && typeof fileIOUtils.downloadFile === 'function') {
-        fileIOUtils.downloadFile(blob, filename, blob.type);
       } else {
-        console.error("No file download mechanism available (FileSaver.js or fileIOUtils.downloadFile)");
-        _handleCriticalError("لا يمكن تنزيل الملف، لا توجد آلية متاحة.");
+        _handleCriticalError("No file download mechanism available (FileSaver.js or fileIOUtils.downloadFile)");
       }
       
-      dependencies.notificationServiceAPI.showSuccess(`تم تصدير الفيديو "${filename}" بنجاح!`);
-      dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, null); // أو reset
-      dependencies.eventAggregator.publish(EVENTS.EXPORT_COMPLETED, { 
-        success: true, 
-        filename 
-      });
-      _cleanup(); // تنظيف بعد الحفظ
+      deps.notificationServiceAPI?.showSuccess(`تم تصدير الفيديو "${filename}" بنجاح!`);
+      deps.stateStore?.dispatch(ACTIONS.SET_EXPORT_PROGRESS, null); 
+      deps.eventAggregator?.publish(EVENTS.EXPORT_COMPLETED, { success: true, filename });
+      _cleanup(); 
+      capturer = null; // الآن يمكننا التخلص منه بأمان
     });
   }
 
   function _cleanup() {
-    console.log("CcaptureRecorder: Cleaning up resources.");
+    deps.errorLogger.info?.({message:"CcaptureRecorder: Cleaning up resources.", origin: 'CcaptureRecorder'});
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
       animationFrameId = null;
     }
-    // لا تقم بـ capturer = null; هنا إذا كانت عملية الحفظ لا تزال تعمل بشكل غير متزامن
-    // يتم تعيينه لـ null في _initializeCapturer عند الفشل أو في stopRecording إذا لم يتم الحفظ
-    // أو بعد اكتمال الحفظ في _finalizeRecording
-    if (!isRecording && capturer && typeof capturer.save !== 'function') { // للتأكد أنه ليس مثيلاً صالحاً قيد العمل
-         // Capturer قد يصبح غير صالح إذا فشلت التهيئة أو بعد استدعاء save
-    }
-    isRecording = false; // تأكيد إضافي
+    isRecording = false; 
     recordedFrames = 0;
     totalFramesToRecord = 0;
-    // من الأفضل أن يتم تعيين capturer إلى null فقط عند انتهاء جميع عملياته أو عند التهيئة الفاشلة
+    // capturer يتم تعيينه لـ null بعد انتهاء الحفظ أو عند فشل التهيئة
   }
   
-  async function startRecording(duration) {
-    console.log("ccaptureRecorder.startRecording called with duration:", duration);
+  async function startRecordingInternal(duration) { // تم تغيير الاسم إلى Internal
+    deps.errorLogger.info?.({message:"ccaptureRecorder.startRecording called", context: { duration }, origin: 'CcaptureRecorder'});
     if (isRecording) {
-      console.warn("Attempted to start recording while already recording.");
+      deps.errorLogger.warn?.({message:"Attempted to start recording while already recording.", origin: 'CcaptureRecorder'});
       return false;
     }
     
-    const state = dependencies.stateStore.getState();
-    const project = state.currentProject;
-    
+    const project = deps.stateStore?.getState?.().currentProject;
     if (!project || !project.exportSettings) {
-      _handleCriticalError('لا توجد إعدادات مشروع أو تصدير صالحة.');
+      _handleCriticalError('إعدادات المشروع أو التصدير غير صالحة.');
       return false;
     }
-    
-    const DOMElems = dependencies.DOMElements || ImportedDOMElements;
-    if (!DOMElems.previews?.canvas) { // تأكد من Canvas مرة أخرى
-      _handleCriticalError('لا يمكن العثور على عنصر Canvas للتسجيل.');
+    if (!deps.DOMElements?.previews?.canvas) {
+      _handleCriticalError('عنصر Canvas غير موجود أو غير مهيأ للتسجيل.');
       return false;
     }
 
-    const fps = project.exportSettings.fps || dependencies.DEFAULT_PROJECT_SCHEMA.exportSettings.fps;
-    if (typeof duration !== 'number' || duration <= 0) {
-        _handleCriticalError('مدة الفيديو غير صالحة أو غير محددة.');
+    const fps = project.exportSettings.fps || deps.DEFAULT_PROJECT_SCHEMA?.exportSettings?.fps;
+    if (!fps || typeof duration !== 'number' || duration <= 0) {
+        _handleCriticalError('بيانات مدة الفيديو أو FPS غير صالحة.');
         return false;
     }
     totalFramesToRecord = Math.ceil(duration * fps);
-    
     if (totalFramesToRecord <= 0) {
-      _handleCriticalError(`عدد الإطارات غير صالح (${totalFramesToRecord})، المدة: ${duration}, FPS: ${fps}.`);
+      _handleCriticalError(`عدد الإطارات غير صالح (${totalFramesToRecord}).`);
       return false;
     }
 
-    // Reset capturer to ensure clean state if a previous attempt failed midway
     capturer = null; 
-    console.log("Calling _initializeCapturer...");
     const initializedSuccessfully = await _initializeCapturer(project.exportSettings);
-    console.log("_initializeCapturer result:", initializedSuccessfully, "Current capturer after init:", capturer);
 
     if (!initializedSuccessfully || !capturer) { 
-      _handleCriticalError('فشل تهيئة مسجل الفيديو بشكل كامل. لا يمكن بدء التسجيل.');
-      _cleanup(); // تأكد من التنظيف
+      _handleCriticalError('فشل تهيئة مسجل الفيديو. لا يمكن بدء التسجيل.');
+      _cleanup();
       return false;
     }
 
     isRecording = true;
-    recordedFrames = 0; // إعادة تعيين عدد الإطارات
+    recordedFrames = 0; 
     lastFrameTime = performance.now();
 
-    dependencies.stateStore.dispatch(ACTIONS.SET_EXPORT_PROGRESS, {
-      percentage: 0,
-      statusMessage: 'بدء التسجيل...'
-    });
-    dependencies.eventAggregator.publish(EVENTS.EXPORT_STARTED);
-    dependencies.notificationServiceAPI.showInfo(`بدء تصدير الفيديو (${totalFramesToRecord} إطار)...`);
+    deps.stateStore?.dispatch(ACTIONS.SET_EXPORT_PROGRESS, { percentage: 0, statusMessage: 'بدء التسجيل...'});
+    deps.eventAggregator?.publish(EVENTS.EXPORT_STARTED);
+    deps.notificationServiceAPI?.showInfo(`بدء تصدير الفيديو (${totalFramesToRecord} إطار)...`);
 
     try {
-      console.log("Attempting to call capturer.start(). Capturer object is:", capturer);
+      deps.errorLogger.info?.({message: "Attempting to call capturer.start()", context: capturer, origin: 'CcaptureRecorder'});
       capturer.start();
-      console.log("capturer.start() called successfully.");
-      animationFrameId = requestAnimationFrame(_recordLoop); // ابدأ الحلقة بعد start()
+      deps.errorLogger.info?.({message: "capturer.start() called successfully.", origin: 'CcaptureRecorder'});
+      animationFrameId = requestAnimationFrame(_recordLoop); 
     } catch (e) {
-      console.error("Error directly from capturer.start():", e, "Capturer was:", capturer);
-      _handleCriticalError('فشل استدعاء دالة بدء التسجيل (capturer.start).', e);
+      _handleCriticalError('فشل استدعاء (capturer.start).', e);
       _cleanup();
+      capturer = null; // تأكد من أنه null في حالة الفشل
       return false;
     }
     return true;
   }
 
-  function stopRecording(saveFile = true) {
-    console.log(`CcaptureRecorder: stopRecording called. Save file: ${saveFile}`);
-    isRecording = false; // مهم جدًا إيقاف الحلقة
+  function stopRecordingInternal(saveFile = true) { // تم تغيير الاسم إلى Internal
+    deps.errorLogger.info?.({message:`CcaptureRecorder: stopRecording called. Save file: ${saveFile}`, origin: 'CcaptureRecorder'});
+    isRecording = false; 
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
       animationFrameId = null;
     }
     
     if (!capturer) {
-      console.warn("stopRecording called but capturer is already null.");
-      _cleanup(); // للتأكيد
+      deps.errorLogger.warn?.({message:"stopRecording called but capturer is already null.", origin: 'CcaptureRecorder'});
+      _cleanup();
       return;
     }
     
-    // إذا كان capturer لا يزال قيد الاستخدام (مثل استدعاء save)،
-    // فإن استدعاء stop مرة أخرى قد يسبب مشاكل أو قد يكون لا فائدة منه
-    // عادة، stop() ثم save(). إذا أردت الإلغاء، فقط قم بالتنظيف.
     if (saveFile) {
-        // _finalizeRecording بالفعل يستدعي capturer.stop() و save()
-        // لذا، إذا أردنا الحفظ، قد يكون من الأفضل أن ننتظر حتى تنتهي الحلقة من تلقاء نفسها وتستدعي _finalizeRecording
-        // أو إذا كان هذا إيقافًا قسريًا ولكن مع حفظ، فيجب أن نضمن أن capturer.stop ثم capturer.save
-        // ولكن هذا سيتداخل مع _finalizeRecording الطبيعي
-        // هذا المنطق يحتاج إلى مراجعة بناءً على كيفية استخدام stopRecording
-        console.warn("stopRecording(true) is complex as _finalizeRecording handles saving. Assuming an immediate stop and save if explicitly called.");
-         _finalizeRecording(); // هذا قد يكون صحيحًا إذا أردت إيقافًا فوريًا وحفظًا
+        _finalizeRecording(); 
     } else {
-      // إذا لم نرغب في الحفظ، فقط أوقف كل شيء
-      capturer.stop(); // أوقف أي عملية تسجيل قائمة
-      dependencies.notificationServiceAPI.showInfo('تم إيقاف تصدير الفيديو.');
-      dependencies.eventAggregator.publish(EVENTS.EXPORT_COMPLETED, { 
-        success: false, 
-        cancelled: true 
-      });
-      _cleanup(); // نظف
-      capturer = null; // بعد الإيقاف الكامل وبدون حفظ، يمكننا التخلص منه
+      if (typeof capturer.stop === 'function') capturer.stop(); 
+      deps.notificationServiceAPI?.showInfo('تم إيقاف تصدير الفيديو.');
+      deps.eventAggregator?.publish(EVENTS.EXPORT_COMPLETED, { success: false, cancelled: true });
+      _cleanup(); 
+      capturer = null; 
     }
   }
   
-  function _setDependencies(injectedDeps) {
-    // دمج الاعتماديات المحقونة مع الافتراضية أو استبدالها
+  // دالة لتحديث الاعتماديات المحقونة
+  function _setInjectedDependencies(injectedDeps) {
     if (injectedDeps) {
-        for (const key in dependencies) {
-            if (injectedDeps.hasOwnProperty(key)) {
-                dependencies[key] = injectedDeps[key];
-            }
-        }
+      deps.DOMElements = injectedDeps.DOMElements || deps.DOMElements;
+      deps.DEFAULT_PROJECT_SCHEMA = injectedDeps.DEFAULT_PROJECT_SCHEMA || deps.DEFAULT_PROJECT_SCHEMA;
+      deps.stateStore = injectedDeps.stateStore || deps.stateStore;
+      deps.errorLogger = injectedDeps.errorLogger || deps.errorLogger;
+      deps.notificationServiceAPI = injectedDeps.notificationServiceAPI || deps.notificationServiceAPI;
+      deps.mainRendererAPI = injectedDeps.mainRendererAPI || deps.mainRendererAPI;
+      deps.eventAggregator = injectedDeps.eventAggregator || deps.eventAggregator;
+      deps.fileIOUtils = injectedDeps.fileIOUtils || deps.fileIOUtils; // تأكد من حقنه
     }
-    console.log("CcaptureRecorder dependencies set/updated:", dependencies);
+    deps.errorLogger.info?.({message: "CcaptureRecorder dependencies set/updated.", context: deps, origin: 'CcaptureRecorder'});
   }
 
-
-  // الواجهة العامة للوحدة
   return {
-    // أضفت _setDependencies لكي يتمكن الكود الخارجي من حقن الاعتماديات الحقيقية
-    // هذا ضروري إذا لم تكن الـ imports في الأعلى تعمل بالشكل المتوقع لكل شيء
-    _setDependencies, 
-    startRecording,
-    stopRecording,
+    _setDependencies: _setInjectedDependencies, // لتستقبل الاعتماديات من الخارج
+    startRecording: startRecordingInternal,
+    stopRecording: stopRecordingInternal,
     isRecording: () => isRecording
   };
-})();
+})(); // نهاية IIFE
 
 
-export function initializeCcaptureRecorder(deps) {
-  // استدعاء _setDependencies هنا لتمرير الاعتماديات الحقيقية من module-bootstrap.js أو main.js
-  if (deps) {
-    ccaptureRecorder._setDependencies(deps);
+/**
+ * دالة التهيئة التي سيستدعيها moduleBootstrap
+ * @param {Object} injectedDeps - الاعتماديات المحقونة (مثل DOMElements, stateStore, إلخ)
+ * @returns {Object} - واجهة برمجة تطبيقات ccaptureRecorder
+ */
+export function initializeCcaptureRecorder(injectedDeps) {
+  // `injectedDeps` هو الكائن الذي يمرره moduleBootstrap
+  // ويجب أن يحتوي على DOMElements, DEFAULT_PROJECT_SCHEMA, stateStore, errorLogger, إلخ.
+  if (injectedDeps && typeof ccaptureRecorderInternal._setDependencies === 'function') {
+    ccaptureRecorderInternal._setDependencies(injectedDeps);
   } else {
-    console.warn("initializeCcaptureRecorder called without dependencies. Using default/mocked dependencies.");
+    // حاول استخدام console مباشرة لأن errorLogger قد لا يكون متاحًا
+    console.warn("initializeCcaptureRecorder called without dependencies or _setDependencies is missing from ccaptureRecorderInternal. Using fallback/default dependencies.");
+    // قد ترغب في إلقاء خطأ هنا إذا كانت الاعتماديات ضرورية للغاية
   }
   return {
-    startRecording: ccaptureRecorder.startRecording,
-    stopRecording: ccaptureRecorder.stopRecording,
-    isRecording: ccaptureRecorder.isRecording
+    startRecording: ccaptureRecorderInternal.startRecording,
+    stopRecording: ccaptureRecorderInternal.stopRecording,
+    isRecording: ccaptureRecorderInternal.isRecording
   };
 }
-
-// يمكن تصدير الكائن ccaptureRecorder مباشرة إذا كنت تستخدمه كـ singleton
-// وتستدعي _setDependencies مرة واحدة عند بدء التطبيق.
-// export default ccaptureRecorder; // هذا يعتمد على نمط الاستخدام
