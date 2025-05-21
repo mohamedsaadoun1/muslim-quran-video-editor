@@ -1,26 +1,45 @@
 // js/features/editor-shell/main-toolbar.handler.js
 import DOMElements from '../../core/dom-elements.js';
-import { ACTIONS } from '../../config/app.constants.js';
-import stateStore from '../../core/state-store.js';
-import eventAggregator from '../../core/event-aggregator.js';
-import errorLogger from '../../core/error-logger.js';
+import { 
+  ACTIONS, 
+  EVENTS,
+  APP_CONSTANTS
+} from '../../config/app.constants.js';
 import notificationPresenter from '../../shared-ui-components/notification.presenter.js';
-import projectActions from '../project-manager/project.actions.js';
-import screenNavigator from './screen.navigator.js';
+import modalFactory from '../../shared-ui-components/modal.factory.js';
 
 /**
  * معالج أزرار شريط الأدوات الرئيسي
  */
 const mainToolbarHandler = (() => {
-  // الاعتمادات الحقيقية
+  // الاعتمادات
   let dependencies = {
-    stateStore,
-    eventAggregator,
-    errorLogger,
-    notificationServiceAPI: notificationPresenter,
-    projectActionsAPI: projectActions,
-    screenNavigator,
-    localizationService: {
+    stateStore: {
+      getState: () => ({ 
+        activeScreen: 'editor', 
+        currentProject: null,
+        mainPlaybackState: { isPlaying: false }
+      }),
+      dispatch: () => {}
+    },
+    eventAggregator: { 
+      publish: () => {}, 
+      subscribe: () => ({ unsubscribe: () => {} }) 
+    },
+    errorLogger: console,
+    notificationServiceAPI: { 
+      showSuccess: (msg) => {}, 
+      showError: (msg) => {}, 
+      showWarning: (msg) => {}
+    },
+    projectActionsAPI: { 
+      saveCurrentProject: () => {}, 
+      loadNewProject: () => {}
+    },
+    screenNavigator: { 
+      navigateTo: (screen) => {} 
+    },
+    localizationService: { 
       translate: key => key
     }
   };
@@ -33,9 +52,39 @@ const mainToolbarHandler = (() => {
    * @private
    */
   async function _handleBackToInitialScreen() {
-    alert('زر العودة مضغوط!');
-    console.log('Back button clicked');
-    dependencies.screenNavigator.navigateTo('initial');
+    const currentState = dependencies.stateStore.getState();
+    if (!currentState || currentState.activeScreen !== 'editor') {
+      return;
+    }
+    try {
+      // التحقق من وجود تعديلات غير محفوظة
+      const projectIsDirty = dependencies.projectActionsAPI.isCurrentProjectDirty(currentState);
+      if (projectIsDirty) {
+        const confirmed = await dependencies.modalFactoryAPI.showConfirm({
+          title: dependencies.localizationService.translate('toolbar.confirm.title') || 'تأكيد العودة',
+          message: dependencies.localizationService.translate('toolbar.confirm.message') || 'هل أنت متأكد من العودة؟ سيتم فقدان التعديلات غير المحفوظة.',
+          confirmText: dependencies.localizationService.translate('button.confirm') || 'تأكيد',
+          cancelText: dependencies.localizationService.translate('button.cancel') || 'إلغاء',
+          type: 'warning'
+        });
+        if (!confirmed) return;
+      }
+      // التنقل إلى الشاشة الرئيسية
+      dependencies.screenNavigator.navigateTo('initial');
+      dependencies.eventAggregator.publish(EVENTS.NAVIGATE_TO_SCREEN, {
+        screenId: 'initial',
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.toolbar.back') || 'فشل في العودة إلى الشاشة الرئيسية',
+        origin: 'MainToolbarHandler._handleBackToInitialScreen'
+      });
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('toolbar.back.failed') || 'فشل في العودة إلى الشاشة الرئيسية'
+      );
+    }
   }
 
   /**
@@ -43,9 +92,53 @@ const mainToolbarHandler = (() => {
    * @private
    */
   async function _handleSaveProject() {
-    alert('زر الحفظ مضغوط!');
-    console.log('Save button clicked');
-    projectActions.saveCurrentProject();
+    const currentState = dependencies.stateStore.getState();
+    const currentProject = currentState.currentProject;
+    if (!currentProject || !currentProject.id) {
+      dependencies.errorLogger.warn({
+        message: dependencies.localizationService.translate('warning.project.no.current') || 'لا يوجد مشروع حالي لحفظه',
+        origin: 'MainToolbarHandler._handleSaveProject'
+      });
+      dependencies.notificationServiceAPI?.showWarning(
+        dependencies.localizationService.translate('project.save.no.current') || 'لا يوجد مشروع حالي لحفظه'
+      );
+      return;
+    }
+    try {
+      // التحقق من صحة المشروع
+      const projectValidation = dependencies.projectModel.validateProjectData(currentProject);
+      if (!projectValidation.isValid) {
+        dependencies.notificationServiceAPI?.showWarning(
+          dependencies.localizationService.translate('project.save.validation.failed', {
+            errors: projectValidation.errors.join(', ')
+          }) || `بيانات المشروع غير صحيحة: ${projectValidation.errors.join(', ')}`
+        );
+        // إرسال إشعار بالخطأ
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_SAVED_FAILED, {
+          projectId: currentProject.id,
+          timestamp: Date.now(),
+          errors: projectValidation.errors
+        });
+        return;
+      }
+      // حفظ المشروع
+      const success = dependencies.projectActionsAPI.saveCurrentProject();
+      if (success) {
+        dependencies.eventAggregator.publish(EVENTS.PROJECT_SAVED_SUCCESS, {
+          projectId: currentProject.id,
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.save') || 'فشل في حفظ المشروع',
+        origin: 'MainToolbarHandler._handleSaveProject'
+      });
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.save.failed') || 'فشل في حفظ المشروع'
+      );
+    }
   }
 
   /**
@@ -53,11 +146,32 @@ const mainToolbarHandler = (() => {
    * @private
    */
   function _handleToggleTheme() {
-    alert('زر التبديل مضغوط!');
-    console.log('Theme toggle clicked');
-    const currentState = dependencies.stateStore.getState();
-    const newTheme = currentState.currentTheme === 'light' ? 'dark' : 'light';
-    dependencies.stateStore.dispatch(ACTIONS.SET_THEME, newTheme);
+    try {
+      const currentTheme = dependencies.stateStore.getState().currentTheme;
+      const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+      dependencies.stateStore.dispatch(ACTIONS.SET_THEME, newTheme);
+      // تحديث واجهة المستخدم
+      if (themeButton) {
+        themeButton.setAttribute('aria-label', dependencies.localizationService.translate(`theme.${newTheme}`) || newTheme);
+        themeButton.classList.toggle('light-mode', newTheme === 'light');
+        themeButton.classList.toggle('dark-mode', newTheme === 'dark');
+      }
+      // نشر الحدث
+      dependencies.eventAggregator.publish(EVENTS.THEME_CHANGED, {
+        oldTheme: currentTheme,
+        newTheme: newTheme,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.theme.toggle') || 'فشل في تبديل السمة',
+        origin: 'MainToolbarHandler._handleToggleTheme'
+      });
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('theme.toggle.failed') || 'فشل في تبديل السمة'
+      );
+    }
   }
 
   /**
@@ -65,9 +179,47 @@ const mainToolbarHandler = (() => {
    * @private
    */
   function _handleExportProject() {
-    alert('زر التصدير مضغوط!');
-    console.log('Export button clicked');
-    alert('التصدير قيد العمل...');
+    try {
+      const currentState = dependencies.stateStore.getState();
+      const currentProject = currentState.currentProject;
+      if (!currentProject || !currentProject.id) {
+        dependencies.errorLogger.warn({
+          message: dependencies.localizationService.translate('warning.project.no.current') || 'لا يوجد مشروع حالي للتصدير',
+          origin: 'MainToolbarHandler._handleExportProject'
+        });
+        dependencies.notificationServiceAPI?.showWarning(
+          dependencies.localizationService.translate('project.export.no.current') || 'لا يوجد مشروع حالي للتصدير'
+        );
+        return;
+      }
+      // التحقق من صحة المشروع
+      const projectValidation = dependencies.projectModel.validateProjectData(currentProject);
+      if (!projectValidation.isValid) {
+        dependencies.notificationServiceAPI?.showWarning(
+          dependencies.localizationService.translate('project.export.validation.failed', {
+            errors: projectValidation.errors.join(', ')
+          }) || `بيانات المشروع غير صحيحة: ${projectValidation.errors.join(', ')}`
+        );
+        return;
+      }
+      // بدء التصدير
+      dependencies.eventAggregator.publish(EVENTS.EXPORT_STARTED, {
+        projectId: currentProject.id,
+        timestamp: Date.now()
+      });
+      if (dependencies.exportRecorderAPI && dependencies.exportRecorderAPI.startRecording) {
+        dependencies.exportRecorderAPI.startRecording();
+      }
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.project.export') || 'فشل في تصدير المشروع',
+        origin: 'MainToolbarHandler._handleExportProject'
+      });
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('project.export.failed') || 'فشل في تصدير المشروع'
+      );
+    }
   }
 
   /**
@@ -75,9 +227,29 @@ const mainToolbarHandler = (() => {
    * @private
    */
   function _handleUndo() {
-    alert('زر التراجع مضغوط!');
-    console.log('Undo button clicked');
-    dependencies.stateStore.dispatch(ACTIONS.UNDO_STATE);
+    try {
+      const currentState = dependencies.stateStore.getState();
+      const currentProject = currentState.currentProject;
+      if (!currentProject || !currentProject.id) return;
+      if (dependencies.undoRedoAPI && dependencies.undoRedoAPI.undo) {
+        dependencies.undoRedoAPI.undo();
+      } else {
+        dependencies.stateStore.dispatch(ACTIONS.UNDO_STATE);
+      }
+      dependencies.eventAggregator.publish(EVENTS.PROJECT_UNDO, {
+        projectId: currentProject.id,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.undo.operation') || 'فشل في تنفيذ التراجع',
+        origin: 'MainToolbarHandler._handleUndo'
+      });
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('undo.failed') || 'فشل في تنفيذ التراجع'
+      );
+    }
   }
 
   /**
@@ -85,9 +257,29 @@ const mainToolbarHandler = (() => {
    * @private
    */
   function _handleRedo() {
-    alert('زر الإعادة مضغوط!');
-    console.log('Redo button clicked');
-    dependencies.stateStore.dispatch(ACTIONS.REDO_STATE);
+    try {
+      const currentState = dependencies.stateStore.getState();
+      const currentProject = currentState.currentProject;
+      if (!currentProject || !currentProject.id) return;
+      if (dependencies.undoRedoAPI && dependencies.undoRedoAPI.redo) {
+        dependencies.undoRedoAPI.redo();
+      } else {
+        dependencies.stateStore.dispatch(ACTIONS.REDO_STATE);
+      }
+      dependencies.eventAggregator.publish(EVENTS.PROJECT_REDO, {
+        projectId: currentProject.id,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      dependencies.errorLogger.error({
+        error,
+        message: dependencies.localizationService.translate('error.redo.operation') || 'فشل في تنفيذ الإعادة',
+        origin: 'MainToolbarHandler._handleRedo'
+      });
+      dependencies.notificationServiceAPI?.showError(
+        dependencies.localizationService.translate('redo.failed') || 'فشل في تنفيذ الإعادة'
+      );
+    }
   }
 
   /**
@@ -106,13 +298,24 @@ const mainToolbarHandler = (() => {
    * تنظيف الموارد
    */
   function cleanup() {
-    if (backButton) backButton.removeEventListener('click', _handleBackToInitialScreen);
-    if (saveButton) saveButton.removeEventListener('click', _handleSaveProject);
-    if (themeButton) themeButton.removeEventListener('click', _handleToggleTheme);
-    if (exportButton) exportButton.removeEventListener('click', _handleExportProject);
-    if (undoButton) undoButton.removeEventListener('click', _handleUndo);
-    if (redoButton) redoButton.removeEventListener('click', _handleRedo);
-
+    if (backButton) {
+      backButton.removeEventListener('click', _handleBackToInitialScreen);
+    }
+    if (saveButton) {
+      saveButton.removeEventListener('click', _handleSaveProject);
+    }
+    if (themeButton) {
+      themeButton.removeEventListener('click', _handleToggleTheme);
+    }
+    if (exportButton) {
+      exportButton.removeEventListener('click', _handleExportProject);
+    }
+    if (undoButton) {
+      undoButton.removeEventListener('click', _handleUndo);
+    }
+    if (redoButton) {
+      redoButton.removeEventListener('click', _handleRedo);
+    }
     dependencies = {};
     backButton = null;
     saveButton = null;
@@ -141,8 +344,13 @@ const mainToolbarHandler = (() => {
  */
 export function initializeMainToolbarHandler(deps) {
   mainToolbarHandler._setDependencies(deps);
-  const { stateStore, localizationService, errorLogger } = deps;
-
+  const {
+    stateStore,
+    errorLogger,
+    eventAggregator,
+    localizationService,
+    projectActionsAPI
+  } = deps;
   // تعيين مراجع العناصر
   mainToolbarHandler.backButtonRef = DOMElements.backToInitialScreenBtn;
   mainToolbarHandler.saveButtonRef = DOMElements.saveProjectBtnEditor;
@@ -150,7 +358,6 @@ export function initializeMainToolbarHandler(deps) {
   mainToolbarHandler.exportButtonRef = DOMElements.exportProjectBtnEditor;
   mainToolbarHandler.undoButtonRef = DOMElements.undoProjectBtnEditor;
   mainToolbarHandler.redoButtonRef = DOMElements.redoProjectBtnEditor;
-
   // إضافة مستمعي الأحداث
   if (mainToolbarHandler.backButtonRef) {
     mainToolbarHandler.backButtonRef.addEventListener('click', mainToolbarHandler._handleBackToInitialScreen);
@@ -160,7 +367,6 @@ export function initializeMainToolbarHandler(deps) {
       origin: 'MainToolbarHandler.initializeMainToolbarHandler'
     });
   }
-
   if (mainToolbarHandler.saveButtonRef) {
     mainToolbarHandler.saveButtonRef.addEventListener('click', mainToolbarHandler._handleSaveProject);
   } else {
@@ -169,7 +375,6 @@ export function initializeMainToolbarHandler(deps) {
       origin: 'MainToolbarHandler.initializeMainToolbarHandler'
     });
   }
-
   if (mainToolbarHandler.themeButtonRef) {
     mainToolbarHandler.themeButtonRef.addEventListener('click', mainToolbarHandler._handleToggleTheme);
   } else {
@@ -178,7 +383,6 @@ export function initializeMainToolbarHandler(deps) {
       origin: 'MainToolbarHandler.initializeMainToolbarHandler'
     });
   }
-
   if (mainToolbarHandler.exportButtonRef) {
     mainToolbarHandler.exportButtonRef.addEventListener('click', mainToolbarHandler._handleExportProject);
   } else {
@@ -187,7 +391,6 @@ export function initializeMainToolbarHandler(deps) {
       origin: 'MainToolbarHandler.initializeMainToolbarHandler'
     });
   }
-
   if (mainToolbarHandler.undoButtonRef) {
     mainToolbarHandler.undoButtonRef.addEventListener('click', mainToolbarHandler._handleUndo);
   } else {
@@ -196,7 +399,6 @@ export function initializeMainToolbarHandler(deps) {
       origin: 'MainToolbarHandler.initializeMainToolbarHandler'
     });
   }
-
   if (mainToolbarHandler.redoButtonRef) {
     mainToolbarHandler.redoButtonRef.addEventListener('click', mainToolbarHandler._handleRedo);
   } else {
@@ -205,12 +407,13 @@ export function initializeMainToolbarHandler(deps) {
       origin: 'MainToolbarHandler.initializeMainToolbarHandler'
     });
   }
-
   // الاشتراك في أحداث النظام
-  const subscription = eventAggregator.subscribe('NAVIGATE_TO_EDITOR_NEW_PROJECT', () => {
+  const subscription = eventAggregator.subscribe(EVENTS.REQUEST_PROJECT_SAVE, () => {
+    mainToolbarHandler._handleSaveProject();
+  });
+  const navigationSubscription = eventAggregator.subscribe(EVENTS.NAVIGATE_TO_EDITOR_NEW_PROJECT, () => {
     mainToolbarHandler._handleBackToInitialScreen();
   });
-
   // تهيئة حالة السمة
   const currentState = stateStore.getState();
   if (currentState && currentState.currentTheme) {
@@ -220,10 +423,10 @@ export function initializeMainToolbarHandler(deps) {
       mainToolbarHandler.themeButtonRef?.classList.add('light-mode');
     }
   }
-
   return {
     cleanup: () => {
       subscription.unsubscribe();
+      navigationSubscription.unsubscribe();
       mainToolbarHandler.cleanup();
     }
   };
