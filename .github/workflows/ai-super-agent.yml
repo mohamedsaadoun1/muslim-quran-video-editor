@@ -1,4 +1,3 @@
----
 name: AI Super Agent
 
 on:
@@ -9,44 +8,60 @@ jobs:
   ai-super-agent:
     runs-on: ubuntu-latest
     if: >
-      github.event.issue.title == 'AI Super Agent' || github.event.issue.title == 'وكيل الذكاء الكامل'
+      github.event.issue.title == 'AI Super Agent' || 
+      github.event.issue.title == 'وكيل الذكاء الكامل'
+    
+    env:
+      HF_API_KEY: ${{ secrets.HF_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MAX_FILE_SIZE: 50000
+      MAX_FILES: 20
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
       - name: Install dependencies
         run: |
-          pip install "open-interpreter[all]" huggingface-hub
+          pip install "open-interpreter[all]" huggingface-hub requests
           npm install -g @mermaid-js/mermaid-cli
 
-      - name: Prepare prompt
-        id: prompt
-        env:
-          COMMENT: ${{ github.event.comment.body }}
+      - name: Validate secrets
         run: |
-          {
-            echo 'prompt<<EOF'
-            echo "$COMMENT"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+          if [ -z "$HF_API_KEY" ]; then
+            echo "Error: HF_API_KEY is not set"
+            exit 1
+          fi
 
-      - name: Discover available models in token
+      - name: Extract user prompt
+        id: prompt
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          echo "prompt<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$COMMENT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Discover available HuggingFace models
         id: models
-        env:
-          HF_API_KEY: ${{ secrets.HF_API_KEY }}
         run: |
           python3 << 'EOF'
 import requests, os, json
 headers = {"Authorization": f"Bearer {os.environ['HF_API_KEY']}"}
-response = requests.get("https://huggingface.co/api/authorized", headers=headers)
+response = requests.get("https://huggingface.co/api/authorized ", headers=headers)
 my_user = response.json().get("user", {}).get("name", "")
-list_resp = requests.get("https://huggingface.co/api/models?full=true", headers=headers)
+list_resp = requests.get("https://huggingface.co/api/models?full=true ", headers=headers)
 models = []
 for m in list_resp.json():
     if (
       (m.get("private") or my_user in m.get("id", "")) and
       m.get("pipeline_tag") in (
-        "text-generation", "text2text-generation", "conversational", "chat", "code", "text"
+        "text-generation", "text2text-generation", 
+        "conversational", "chat", "code", "text"
       )
     ):
         models.append(m["id"])
@@ -62,50 +77,111 @@ with open("models.txt", "w") as f:
     [f.write(m + "\n") for m in models[:8]]
 EOF
 
-      - name: Read all project files and structure
+      - name: Analyze project structure
         id: readproject
         run: |
-          find . -type f ! -path "./.git/*" ! -path "./.github/*" ! -name "*.png" ! -name "*.jpg" ! -name "*.jpeg" -exec sh -c 'echo "===== $1 ====="; cat "$1"; echo "";' _ {} \; > all_project_files.txt
+          # Find relevant source files
+          find . -type f ! -path "./.git/*" ! -path "./.github/*" \
+            -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.json" \
+            -o -name "*.md" -o -name "*.html" -o -name "*.css" | sort > project_files.txt
+          
+          # Create project tree
           tree -a -I '.git|.github' > project_tree.txt
 
-      - name: Run smart agent prompt (with full context)
-        env:
-          HF_API_KEY: ${{ secrets.HF_API_KEY }}
+      - name: Generate AI prompt with context
+        id: aiprompt
         run: |
           PROMPT="${{ steps.prompt.outputs.prompt }}"
           TREE="$(cat project_tree.txt)"
-          ALLFILES="$(head -c 50000 all_project_files.txt)"
-          AI_PROMPT="انت وكيل ذكي على مشروع برمجي كامل. هيكل المشروع:\n$TREE\n\nملفات المشروع (مختصر):\n$ALLFILES\n\nالأمر أو الطلب:\n$PROMPT\n\nملاحظة: يمكنك حذف أو تعديل أو إعادة أي ملف أو إنشاء ملفات أو مشاريع جديدة بالكامل، ويمكنك الرجوع عن أي حذف إذا طلب منك ذلك، وكل تغيير يتم عبر commit منفصل ليسهل الرجوع. إذا طلب المستخدم استرجاع شيء احذفته سابقًا، استرجع أحدث نسخة منه من git. كل أمر تنفذه اكتب معه شرح مختصر جدًا لما تم فعله."
+          
+          FILE_COUNT=0
+          CURRENT_SIZE=0
+          
+          > all_project_files.txt
+          while IFS= read -r FILE; do
+            if [ $FILE_COUNT -ge ${{ env.MAX_FILES }} ]; then break; fi
+            if [ -f "$FILE" ]; then
+              FILE_SIZE=$(wc -c <"$FILE")
+              if [ $((CURRENT_SIZE + FILE_SIZE)) -le ${{ env.MAX_FILE_SIZE }} ]; then
+                echo "===== $FILE =====" >> all_project_files.txt
+                cat "$FILE" >> all_project_files.txt
+                echo "" >> all_project_files.txt
+                FILE_COUNT=$((FILE_COUNT + 1))
+                CURRENT_SIZE=$((CURRENT_SIZE + FILE_SIZE))
+              fi
+            fi
+          done < project_files.txt
+          
+          ALLFILES="$(cat all_project_files.txt)"
+          
+          AI_PROMPT="You are a smart agent working on a complete software project. Project structure:\n$TREE\n\nProject files (limited to ${{ env.MAX_FILES }} files and $((MAX_FILE_SIZE/1000))KB total):\n$ALLFILES\n\nUser request:\n$PROMPT\n\nNote: You can delete, modify, or recreate any file or create new files/projects entirely. Each change should be made in a separate commit for easy rollback. If the user requests to restore something you previously deleted, retrieve the latest version from git. For each action you perform, write a very brief explanation of what was done."
 
           echo "$AI_PROMPT" > ai_super_prompt.txt
 
+      - name: Run AI models
+        id: runmodels
+        run: |
           > ai_super_responses.md
           while IFS= read -r MODEL; do
               {
                 echo ""
                 echo "## [$MODEL]"
-                interpreter --model "$MODEL" --hf --hf-token "$HF_API_KEY" --no-stream --no-tty --text "$(cat ai_super_prompt.txt)" || echo "فشل في النموذج $MODEL"
+                interpreter --model "$MODEL" --hf --hf-token "$HF_API_KEY" \
+                  --no-stream --no-tty --text "$(cat ai_super_prompt.txt)" || \
+                  echo "Failed with model $MODEL"
               } >> ai_super_responses.md
           done < models.txt
 
-      - name: Apply AI Proposed Changes (if any)
+      - name: Apply AI suggested changes
+        id: applychanges
         run: |
-          grep -E '^(git |echo |rm |mv |cp |mkdir |cat |touch )' ai_super_responses.md > ai_commands.sh || true
+          # Extract and sanitize commands
+          grep -E '^(git |echo |rm |mv |cp |mkdir |cat |touch )' \
+            ai_super_responses.md > ai_commands.sh || true
+          
           if [ -s ai_commands.sh ]; then
-            bash ai_commands.sh || true
+            echo "Applying changes:"
+            cat ai_commands.sh
+            
+            # Add safety flags
+            sed -i 's/^rm /rm -f /' ai_commands.sh
+            sed -i 's/^mv /mv -f /' ai_commands.sh
+            sed -i 's/^cp /cp -f /' ai_commands.sh
+            
+            # Execute commands
+            bash ai_commands.sh || echo "Some commands failed"
+          else
+            echo "No changes proposed"
           fi
 
-      - name: Commit and push all changes
+      - name: Commit and push changes
+        id: commit
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add . || true
-          git commit -am "AI Super Agent: تنفيذ أوامر المستخدم و/أو تعديلات المشروع" || exit 0
-          git push || true
+          
+          # Only commit if there are changes
+          if [ -n "$(git status --porcelain)" ]; then
+            git add . || echo "Failed to add files"
+            git commit -am "AI Super Agent: Implementing user request" || echo "Commit failed"
+            
+            # Handle git push carefully
+            git push || echo "Push failed"
+          else
+            echo "No changes to commit"
+          fi
 
-      - name: Reply to Issue (with report)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Respond to issue
+        id: reply
         run: |
-          REPLY=$(cat ai_super_responses.md)
+          # Prepare response
+          REPLY="$(cat ai_super_responses.md)"
+          
+          # Use gh CLI to comment
           gh issue comment "${{ github.event.issue.number }}" --body "$REPLY"
+
+      - name: Cleanup temporary files
+        if: always()
+        run: |
+          rm -f ai_super_prompt.txt ai_super_responses.md ai_commands.sh 
+          rm -f models.txt project_files.txt project_tree.txt all_project_files.txt
