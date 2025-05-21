@@ -51,10 +51,18 @@ jobs:
         run: |
           cat > get_models.py << 'EOL'
 import requests, os, json
-headers = {"Authorization": f"Bearer {os.environ['HF_API_KEY']}"}
-response = requests.get("https://huggingface.co/api/authorized ", headers=headers)
+headers = {
+  "Authorization": f"Bearer {os.environ['HF_API_KEY']}"
+}
+response = requests.get(
+  "https://huggingface.co/api/authorized ", 
+  headers=headers
+)
 my_user = response.json().get("user", {}).get("name", "")
-list_resp = requests.get("https://huggingface.co/api/models?full=true ", headers=headers)
+list_resp = requests.get(
+  "https://huggingface.co/api/models?full=true ", 
+  headers=headers
+)
 models = []
 for m in list_resp.json():
     if (
