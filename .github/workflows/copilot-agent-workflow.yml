@@ -1,14 +1,10 @@
 name: GitHub Copilot Coding Agent
 
-description: >
-  Run GitHub Copilot Agent to handle development tasks like refactoring,
-  fixing bugs, or adding features to the Muslim Quran Video Editor project.
-
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: "What do you want the Copilot Agent to do? (e.g., 'Optimize video export module')"
+        description: "What do you want the Copilot Agent to do?"
         required: true
 
 jobs:
