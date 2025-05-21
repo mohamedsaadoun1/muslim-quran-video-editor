@@ -21,11 +21,14 @@ jobs:
 
       - name: Prepare prompt
         id: prompt
+        env:
+          COMMENT: ${{ github.event.comment.body }}
         run: |
-          COMMENT="${{ github.event.comment.body }}"
-          echo "prompt<<EOF" >> $GITHUB_OUTPUT
-          echo "$COMMENT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo 'prompt<<EOF'
+            echo "$COMMENT"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Discover available models in token
         id: models
@@ -33,36 +36,36 @@ jobs:
           HF_API_KEY: ${{ secrets.HF_API_KEY }}
         run: |
           python3 << 'EOF'
-          import requests, os, json
-          headers = {"Authorization": f"Bearer {os.environ['HF_API_KEY']}"}
-          response = requests.get("https://huggingface.co/api/authorized", headers=headers)
-          my_user = response.json().get("user", {}).get("name", "")
-          list_resp = requests.get("https://huggingface.co/api/models?full=true", headers=headers)
-          models = []
-          for m in list_resp.json():
-              if (
-                (m.get("private") or my_user in m.get("id", "")) and
-                m.get("pipeline_tag") in (
-                  "text-generation", "text2text-generation", "conversational", "chat", "code", "text"
-                )
-              ):
-                  models.append(m["id"])
-          if not models:
-              models = [
-                  "meta-llama/Meta-Llama-3-70B-Instruct",
-                  "Qwen/Qwen1.5-72B-Chat",
-                  "deepseek-ai/deepseek-coder-33b-instruct",
-                  "google/gemma-7b-it",
-                  "microsoft/Phi-3-mini-4k-instruct"
-              ]
-          with open("models.txt", "w") as f:
-              [f.write(m + "\n") for m in models[:8]]
-          EOF
+import requests, os, json
+headers = {"Authorization": f"Bearer {os.environ['HF_API_KEY']}"}
+response = requests.get("https://huggingface.co/api/authorized", headers=headers)
+my_user = response.json().get("user", {}).get("name", "")
+list_resp = requests.get("https://huggingface.co/api/models?full=true", headers=headers)
+models = []
+for m in list_resp.json():
+    if (
+      (m.get("private") or my_user in m.get("id", "")) and
+      m.get("pipeline_tag") in (
+        "text-generation", "text2text-generation", "conversational", "chat", "code", "text"
+      )
+    ):
+        models.append(m["id"])
+if not models:
+    models = [
+        "meta-llama/Meta-Llama-3-70B-Instruct",
+        "Qwen/Qwen1.5-72B-Chat",
+        "deepseek-ai/deepseek-coder-33b-instruct",
+        "google/gemma-7b-it",
+        "microsoft/Phi-3-mini-4k-instruct"
+    ]
+with open("models.txt", "w") as f:
+    [f.write(m + "\n") for m in models[:8]]
+EOF
 
       - name: Read all project files and structure
         id: readproject
         run: |
-          find . -type f ! -path "./.git/*" ! -path "./.github/*" ! -name "*.png" ! -name "*.jpg" ! -name "*.jpeg" -exec sh -c 'echo "===== {} ====="; cat "{}"; echo "";' \; > all_project_files.txt
+          find . -type f ! -path "./.git/*" ! -path "./.github/*" ! -name "*.png" ! -name "*.jpg" ! -name "*.jpeg" -exec sh -c 'echo "===== $1 ====="; cat "$1"; echo "";' _ {} \; > all_project_files.txt
           tree -a -I '.git|.github' > project_tree.txt
 
       - name: Run smart agent prompt (with full context)
@@ -76,10 +79,13 @@ jobs:
 
           echo "$AI_PROMPT" > ai_super_prompt.txt
 
-          echo "" > ai_super_responses.md
-          while read MODEL; do
-              echo -e "\n\n## [$MODEL]" >> ai_super_responses.md
-              interpreter --model "$MODEL" --hf --hf-token $HF_API_KEY --no-stream --no-tty --text "$(cat ai_super_prompt.txt)" >> ai_super_responses.md || echo "فشل في النموذج $MODEL" >> ai_super_responses.md
+          > ai_super_responses.md
+          while IFS= read -r MODEL; do
+              {
+                echo ""
+                echo "## [$MODEL]"
+                interpreter --model "$MODEL" --hf --hf-token "$HF_API_KEY" --no-stream --no-tty --text "$(cat ai_super_prompt.txt)" || echo "فشل في النموذج $MODEL"
+              } >> ai_super_responses.md
           done < models.txt
 
       - name: Apply AI Proposed Changes (if any)
@@ -102,4 +108,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           REPLY=$(cat ai_super_responses.md)
-          gh issue comment ${{ github.event.issue.number }} --body "$REPLY"
+          gh issue comment "${{ github.event.issue.number }}" --body "$REPLY"
