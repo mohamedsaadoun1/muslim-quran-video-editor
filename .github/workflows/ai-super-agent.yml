@@ -49,7 +49,7 @@ jobs:
       - name: Discover available HuggingFace models
         id: models
         run: |
-          python3 << 'EOF'
+          cat << 'EOP' > get_models.py
 import requests, os, json
 headers = {"Authorization": f"Bearer {os.environ['HF_API_KEY']}"}
 response = requests.get("https://huggingface.co/api/authorized ", headers=headers)
@@ -75,17 +75,15 @@ if not models:
     ]
 with open("models.txt", "w") as f:
     [f.write(m + "\n") for m in models[:8]]
-EOF
+EOP
+          python3 get_models.py
 
       - name: Analyze project structure
         id: readproject
         run: |
-          # Find relevant source files
           find . -type f ! -path "./.git/*" ! -path "./.github/*" \
             -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.json" \
             -o -name "*.md" -o -name "*.html" -o -name "*.css" | sort > project_files.txt
-          
-          # Create project tree
           tree -a -I '.git|.github' > project_tree.txt
 
       - name: Generate AI prompt with context
@@ -135,7 +133,6 @@ EOF
       - name: Apply AI suggested changes
         id: applychanges
         run: |
-          # Extract and sanitize commands
           grep -E '^(git |echo |rm |mv |cp |mkdir |cat |touch )' \
             ai_super_responses.md > ai_commands.sh || true
           
@@ -143,12 +140,10 @@ EOF
             echo "Applying changes:"
             cat ai_commands.sh
             
-            # Add safety flags
             sed -i 's/^rm /rm -f /' ai_commands.sh
             sed -i 's/^mv /mv -f /' ai_commands.sh
             sed -i 's/^cp /cp -f /' ai_commands.sh
             
-            # Execute commands
             bash ai_commands.sh || echo "Some commands failed"
           else
             echo "No changes proposed"
@@ -160,12 +155,10 @@ EOF
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Only commit if there are changes
           if [ -n "$(git status --porcelain)" ]; then
             git add . || echo "Failed to add files"
             git commit -am "AI Super Agent: Implementing user request" || echo "Commit failed"
             
-            # Handle git push carefully
             git push || echo "Push failed"
           else
             echo "No changes to commit"
@@ -174,14 +167,11 @@ EOF
       - name: Respond to issue
         id: reply
         run: |
-          # Prepare response
           REPLY="$(cat ai_super_responses.md)"
-          
-          # Use gh CLI to comment
           gh issue comment "${{ github.event.issue.number }}" --body "$REPLY"
 
       - name: Cleanup temporary files
         if: always()
         run: |
           rm -f ai_super_prompt.txt ai_super_responses.md ai_commands.sh 
-          rm -f models.txt project_files.txt project_tree.txt all_project_files.txt
+          rm -f models.txt project_files.txt project_tree.txt all_project_files.txt get_models.py
