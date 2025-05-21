@@ -8,7 +8,7 @@ on:
 jobs:
   ai-super-agent:
     runs-on: ubuntu-latest
-
+    
     env:
       HF_API_KEY: ${{ secrets.HF_API_KEY }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -25,19 +25,9 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        id: install_deps
         run: |
-          set -e
-          pip install "open-interpreter[all]" huggingface-hub requests || { echo "DEPENDENCY_ERROR: Failed to install Python packages"; exit 10; }
-          npm install -g @mermaid-js/mermaid-cli || { echo "DEPENDENCY_ERROR: Failed to install mermaid-cli"; exit 11; }
-
-      - name: Validate secrets
-        id: check_secrets
-        run: |
-          if [ -z "$HF_API_KEY" ]; then
-            echo "SECRET_ERROR: HF_API_KEY is not set" > error_message.txt
-            exit 20
-          fi
+          pip install "open-interpreter[all]" huggingface-hub requests
+          npm install -g @mermaid-js/mermaid-cli
 
       - name: Extract user prompt
         id: prompt
@@ -54,45 +44,41 @@ import requests, os, json
 headers = {
   "Authorization": f"Bearer {os.environ['HF_API_KEY']}"
 }
-try:
-    response = requests.get(
-      "https://huggingface.co/api/authorized ", 
-      headers=headers
-    )
-    my_user = response.json().get("user", {}).get("name", "")
-    list_resp = requests.get(
-      "https://huggingface.co/api/models?full=true ", 
-      headers=headers
-    )
-    models = []
-    for m in list_resp.json():
-        if (
-          (m.get("private") or my_user in m.get("id", "")) and
-          m.get("pipeline_tag") in (
-            "text-generation", "text2text-generation", 
-            "conversational", "chat", "code", "text"
-          )
-        ):
-            models.append(m["id"])
-    if not models:
-        models = [
-            "meta-llama/Meta-Llama-3-70B-Instruct",
-            "Qwen/Qwen1.5-72B-Chat",
-            "deepseek-ai/deepseek-coder-33b-instruct",
-            "google/gemma-7b-it",
-            "microsoft/Phi-3-mini-4k-instruct"
-        ]
-    with open("models.txt", "w") as f:
-        [f.write(m + "\n") for m in models[:8]]
-except Exception as e:
-    with open("models.txt", "w") as f:
-        f.write("meta-llama/Meta-Llama-3-70B-Instruct\n")
+response = requests.get(
+  "https://huggingface.co/api/authorized ", 
+  headers=headers
+)
+my_user = response.json().get("user", {}).get("name", "")
+list_resp = requests.get(
+  "https://huggingface.co/api/models?full=true ", 
+  headers=headers
+)
+models = []
+for m in list_resp.json():
+    if (
+      (m.get("private") or my_user in m.get("id", "")) and
+      m.get("pipeline_tag") in (
+        "text-generation", "text2text-generation", 
+        "conversational", "chat", "code", "text"
+      )
+    ):
+        models.append(m["id"])
+if not models:
+    models = [
+        "meta-llama/Meta-Llama-3-70B-Instruct",
+        "Qwen/Qwen1.5-72B-Chat",
+        "deepseek-ai/deepseek-coder-33b-instruct",
+        "google/gemma-7b-it",
+        "microsoft/Phi-3-mini-4k-instruct"
+    ]
+with open("models.txt", "w") as f:
+    [f.write(m + "\n") for m in models[:8]]
 EOL
 
       - name: Discover available models
         id: models
         run: |
-          python3 get_models.py
+          python3 get_models.py || echo "Failed to discover models"
 
       - name: Analyze project structure
         id: readproject
@@ -113,7 +99,7 @@ EOL
           
           > all_project_files.txt
           while IFS= read -r FILE; do
-            if [ $FILE_COUNT -ge ${{ env.MAX_FILES }} ]; then break; fi
+            if [ $FILE_COUNT -ge $MAX_FILES ]; then break; fi
             if [ -f "$FILE" ]; then
               FILE_SIZE=$(wc -c <"$FILE")
               if [ $((CURRENT_SIZE + FILE_SIZE)) -le $((MAX_FILE_SIZE)) ]; then
@@ -142,15 +128,20 @@ from git. For each action you perform, write a very brief explanation of what wa
         id: runmodels
         run: |
           > ai_super_responses.md
-          while IFS= read -r MODEL; do
-              {
-                echo ""
-                echo "## [$MODEL]"
-                interpreter --model "$MODEL" --hf --hf-token "$HF_API_KEY" \
-                  --no-stream --no-tty --text "$(cat ai_super_prompt.txt)" || \
-                  echo "Failed with model $MODEL"
-              } >> ai_super_responses.md
-          done < models.txt
+          if [ -s models.txt ]; then
+            while IFS= read -r MODEL; do
+                {
+                  echo ""
+                  echo "## [$MODEL]"
+                  interpreter --model "$MODEL" --hf --hf-token "$HF_API_KEY" \
+                    --no-stream --no-tty --text "$(cat ai_super_prompt.txt)" || \
+                    echo "Failed with model $MODEL"
+                } >> ai_super_responses.md
+            done < models.txt
+          else
+            echo "## [ERROR]" >> ai_super_responses.md
+            echo "No models available. Model discovery failed." >> ai_super_responses.md
+          fi
 
       - name: Apply AI changes
         id: apply-changes
@@ -168,7 +159,7 @@ from git. For each action you perform, write a very brief explanation of what wa
             
             bash ai_commands.sh || echo "Some commands failed"
           else
-            echo "No changes proposed"
+            echo "No valid changes proposed"
           fi
 
       - name: Commit changes
@@ -185,33 +176,27 @@ from git. For each action you perform, write a very brief explanation of what wa
             echo "No changes to commit"
           fi
 
-      - name: Reply to issue with error if failed (deps or secret)
-        if: failure()
-        run: |
-          ERR_MSG=""
-          if [ -f error_message.txt ]; then
-            ERR_MSG="$(cat error_message.txt)"
-          else
-            # Detect error from logs if possible
-            if grep -q "DEPENDENCY_ERROR" $GITHUB_WORKSPACE/_temp/*/step_summary* 2>/dev/null; then
-              ERR_MSG="حدث خطأ أثناء تثبيت الحزم أو الأدوات المطلوبة. يرجى مراجعة إعدادات المشروع."
-            elif grep -q "SECRET_ERROR" $GITHUB_WORKSPACE/_temp/*/step_summary* 2>/dev/null; then
-              ERR_MSG="حدث خطأ: لم يتم ضبط HF_API_KEY في Secrets الخاص بالمشروع."
-            else
-              ERR_MSG="حدث خطأ غير متوقع أثناء تنفيذ وكيل الذكاء الاصطناعي."
-            fi
-          fi
-          gh issue comment "${{ github.event.issue.number }}" --body "$ERR_MSG"
-
-      - name: Reply to issue with AI response
-        if: success()
+      - name: Reply to issue
+        id: reply
         run: |
           REPLY="$(cat ai_super_responses.md)"
-          gh issue comment "${{ github.event.issue.number }}" --body "$REPLY"
+          if [ -z "$REPLY" ]; then
+            echo "## [ERROR]" > ai_super_responses.md
+            echo "No response generated by AI. An error occurred during processing." >> ai_super_responses.md
+            REPLY="$(cat ai_super_responses.md)"
+          fi
+          
+          if [ -n "$REPLY" ]; then
+            gh issue comment "${{ github.event.issue.number }}" --body "$REPLY" || echo "Failed to post comment"
+          else
+            echo "## [ERROR]" > ai_super_responses.md
+            echo "Empty response from AI - No reply body generated" >> ai_super_responses.md
+            gh issue comment "${{ github.event.issue.number }}" --body "AI processing failed. No response generated." || echo "Failed to post error comment"
+          fi
 
       - name: Cleanup
         if: always()
         run: |
           rm -f ai_super_prompt.txt ai_super_responses.md ai_commands.sh 
           rm -f models.txt project_files.txt project_tree.txt all_project_files.txt 
-          rm -f get_models.py error_message.txt
+          rm -f get_models.py
