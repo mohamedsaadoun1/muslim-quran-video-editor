@@ -1,45 +1,27 @@
 // js/shared-ui-components/theme.controller.js
 
-import DOMElements from '../core/dom-elements.js';
-import { ACTIONS, EVENTS } from '../config/app.constants.js';
+// لا تستورد DOMElements هنا مباشرة
+// import DOMElements from '../core/dom-elements.js'; // <--- إزالة هذا السطر
+
+// استورد الثوابت فقط
+import { ACTIONS, EVENTS, LS_KEYS } from '../config/app.constants.js'; // افترض أن LS_KEYS.CURRENT_THEME هو ما تستخدمه
+
 
 /**
  * @typedef {Object} ThemeControllerDependencies
- * @property {Object} stateStore - مخزن الحالة
- * @property {Function} stateStore.dispatch - إرسال تغييرات الحالة
- * @property {Function} stateStore.getState - الحصول على الحالة الحالية
- * @property {Object} stateStore.subscribe - الاشتراك في تغييرات الحالة
- * @property {Object} eventAggregator - محرك الأحداث
- * @property {Function} eventAggregator.publish - نشر الأحداث
- * @property {Function} eventAggregator.subscribe - الاشتراك في الأحداث
- * @property {Object} errorLogger - مسجل الأخطاء
- * @property {Object} localizationService - خدمة الترجمة
+ * @property {Object} DOMElements - كائن عناصر DOM المُهيأ  // <--- إضافة هذا
+ * @property {Object} stateStore
+ * @property {Object} eventAggregator
+ * @property {Object} errorLogger
+ * @property {Object} localizationServiceAPI // أو localizationService، حسب ما يوفره moduleBootstrap
  */
 
-/**
- * @typedef {Object} ThemeControllerState
- * @property {string} activeTheme - نوع الموضوع النشط ('light' أو 'dark')
- * @property {boolean} isInitialized - هل تم تهيئة المدير
- * @property {'light'|'dark'} currentDOMTheme - موضوع DOM الحالي
- * @property {boolean} isDarkMode - هل الوضع الليلي مفعّل
- * @property {boolean} isLightMode - هل الوضع النهاري مفعّل
- * @property {number} themeChangeCount - عدد تغييرات الموضوع
- * @property {Object} lastThemeChange - بيانات آخر تغيير للموضوع
- * @property {string} lastThemeChange.theme - نوع الموضوع
- * @property {number} lastThemeChange.timestamp - وقت التغيير
- * @property {string} [customTheme] - موضوع مخصص إن وُجد
- */
-
-/**
- * مدير الموضوعات (السمات)
- * @type {{}}
- */
-const themeController = (() => {
-  // المتغيرات الداخلية
-  let currentDOMTheme = 'light'; // تتبع الموضوع الحالي المطبّق على DOM
-  let dependencies = {
+const themeControllerInternal = (() => {
+  // متغير داخلي لتخزين الاعتماديات، بما في ذلك DOMElements
+  let internalDeps = {
+    DOMElements: null, // سيتم تعيينه عبر _setDependencies
     stateStore: {
-      getState: () => ({ currentTheme: 'light' }),
+      getState: () => ({ appSettings: { currentTheme: 'light' } }), // تم تعديل المسار ليناسب stateStore
       dispatch: () => {},
       subscribe: () => ({ unsubscribe: () => {} })
     },
@@ -48,11 +30,13 @@ const themeController = (() => {
       subscribe: () => ({ unsubscribe: () => {} })
     },
     errorLogger: console,
-    localizationService: {
+    localizationServiceAPI: { // تم تغيير الاسم ليطابق ما يُقدم عادة
       translate: (key) => key
     }
   };
-  
+  let currentDOMTheme = 'light'; // يمكن تهيئتها لاحقًا من الحالة أو localStorage
+  const LS_KEY_CURRENT_THEME = LS_KEYS.THEME || 'appCurrentTheme'; // استخدم الثابت
+
   /**
    * تطبيق الموضوع على DOM
    * @private
@@ -60,7 +44,7 @@ const themeController = (() => {
    */
   function _applyThemeToDOM(theme) {
     if (!document.body) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+      (internalDeps.errorLogger.warn || console.warn).call(internalDeps.errorLogger, { // استخدم warn بدل logWarning إذا كان errorLogger لا يحتوي عليها
         message: 'عنصر body غير موجود. لا يمكن تطبيق الموضوع.',
         origin: 'ThemeController._applyThemeToDOM'
       });
@@ -73,49 +57,41 @@ const themeController = (() => {
     document.body.classList.remove(oldThemeClass);
     document.body.classList.add(newThemeClass);
     
-    // أيقونات الموضوع
     const sunIconHTML = '<i class="fas fa-sun"></i>';
     const moonIconHTML = '<i class="fas fa-moon"></i>';
     const newIconHTML = theme === 'dark' ? sunIconHTML : moonIconHTML;
-    const newAriaLabel = theme === 'dark' ? 
-        (dependencies.localizationService.translate('theme.toggle.switchToLight') || 'تبديل إلى الوضع النهاري') : 
-        (dependencies.localizationService.translate('theme.toggle.switchToDark') || 'تبديل إلى الوضع الليلي');
+
+    const newAriaLabelKey = theme === 'dark' ? 'theme.toggle.switchToLight' : 'theme.toggle.switchToDark';
+    const fallbackAriaLabel = theme === 'dark' ? 'تبديل إلى الوضع النهاري' : 'تبديل إلى الوضع الليلي';
+    const newAriaLabel = internalDeps.localizationServiceAPI.translate(newAriaLabelKey) || fallbackAriaLabel;
     
-    // تحديث زر التبديل
-    if (DOMElements.themeToggleInitial) {
-      DOMElements.themeToggleInitial.innerHTML = newIconHTML;
-      DOMElements.themeToggleInitial.setAttribute('title', newAriaLabel);
-      DOMElements.themeToggleInitial.setAttribute('aria-label', newAriaLabel);
+    // --- استخدام internalDeps.DOMElements ---
+    if (internalDeps.DOMElements?.controls?.theme?.initial) { // تحقق من المسار الكامل
+      internalDeps.DOMElements.controls.theme.initial.innerHTML = newIconHTML;
+      internalDeps.DOMElements.controls.theme.initial.setAttribute('title', newAriaLabel);
+      internalDeps.DOMElements.controls.theme.initial.setAttribute('aria-label', newAriaLabel);
     }
     
-    if (DOMElements.themeToggleEditor) {
-      DOMElements.themeToggleEditor.innerHTML = newIconHTML;
-      DOMElements.themeToggleEditor.setAttribute('title', newAriaLabel);
-      DOMElements.themeToggleEditor.setAttribute('aria-label', newAriaLabel);
+    if (internalDeps.DOMElements?.controls?.theme?.editor) { // تحقق من المسار الكامل
+      internalDeps.DOMElements.controls.theme.editor.innerHTML = newIconHTML;
+      internalDeps.DOMElements.controls.theme.editor.setAttribute('title', newAriaLabel);
+      internalDeps.DOMElements.controls.theme.editor.setAttribute('aria-label', newAriaLabel);
     }
+    // --- نهاية استخدام internalDeps.DOMElements ---
     
-    // تحديث لون الموضوع للمتصفح
     const metaThemeColor = document.querySelector('meta[name="theme-color"]');
-    
     if (metaThemeColor) {
-      const PWA_THEME_COLOR_DARK = '#0D0D0D';
-      const PWA_THEME_COLOR_LIGHT = '#00796b';
-      
+      const PWA_THEME_COLOR_DARK = '#0D0D0D'; // أو من إعدادات التطبيق
+      const PWA_THEME_COLOR_LIGHT = '#00796b'; // أو من إعدادات التطبيق
       metaThemeColor.setAttribute('content', theme === 'dark' ? PWA_THEME_COLOR_DARK : PWA_THEME_COLOR_LIGHT);
     }
     
     currentDOMTheme = theme;
     
-    // نشر حدث تغيير الموضوع
-    dependencies.eventAggregator.publish(EVENTS.THEME_CHANGED, {
-      theme,
-      timestamp: Date.now()
-    });
+    internalDeps.eventAggregator.publish(EVENTS.THEME_CHANGED, { theme, timestamp: Date.now() });
     
-    // تحديث الحالة
-    if (dependencies.stateStore && dependencies.stateStore.dispatch) {
-      dependencies.stateStore.dispatch(ACTIONS.SET_THEME, theme);
-    }
+    // لا تقم بإرسال dispatch(ACTIONS.SET_THEME, theme) هنا إذا كنت ستعتمد على stateStore.subscribe
+    // لتجنب الحلقات. دع الحالة تتغير أولاً، ثم يتفاعل الـ subscribe.
   }
   
   /**
@@ -123,558 +99,214 @@ const themeController = (() => {
    * @private
    */
   function _handleThemeToggle() {
-    const currentTheme = dependencies.stateStore.getState().currentTheme;
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    // احصل على الحالة الحالية من internalDeps.stateStore
+    const currentState = internalDeps.stateStore.getState();
+    // المسار الصحيح لموضوع الحالة قد يكون appSettings.currentTheme أو ما شابه
+    // لنفترض أنه currentTheme مباشرة للحظة
+    const currentThemeInState = currentState?.currentTheme || currentState?.appSettings?.currentTheme || 'light'; 
+    const newTheme = currentThemeInState === 'light' ? 'dark' : 'light';
     
-    dependencies.stateStore.dispatch(ACTIONS.SET_THEME, newTheme);
+    // فقط قم بإرسال التغيير إلى الحالة، والـ subscriber سيتولى _applyThemeToDOM
+    internalDeps.stateStore.dispatch(ACTIONS.SET_THEME, newTheme);
   }
-  
-  /**
-   * تعيين التبعيات الداخلية
-   * @param {ThemeControllerDependencies} injectedDeps - التبعيات المُدخلة
-   */
-  function _setDependencies(injectedDeps) {
-    if (injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
-    if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
-    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
-    if (injectedDeps.localizationService) dependencies.localizationService = injectedDeps.localizationService;
-  }
-  
-  /**
-   * تعيين التبعيات الداخلية
-   * @param {ThemeControllerDependencies} injectedDeps - التبعيات المُدخلة
-   */
-  function _setDependencies(injectedDeps) {
-    if (injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
-    if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
-    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
-    if (injectedDeps.localizationService) dependencies.localizationService = injectedDeps.localizationService;
-  }
-  
-  /**
-   * تطبيق الموضوع على DOM
-   * @private
-   * @param {string} theme - نوع الموضوع ('light' أو 'dark')
-   */
-  function _applyThemeToDOM(theme) {
-    if (!document.body) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-        message: 'عنصر body غير موجود. لا يمكن تطبيق الموضوع.',
-        origin: 'ThemeController._applyThemeToDOM'
-      });
-      return;
-    }
-    
-    const newThemeClass = theme === 'dark' ? 'dark-theme' : 'light-theme';
-    const oldThemeClass = theme === 'dark' ? 'light-theme' : 'dark-theme';
-    
-    document.body.classList.remove(oldThemeClass);
-    document.body.classList.add(newThemeClass);
-    
-    // تحديث زر التبديل
-    const sunIconHTML = '<i class="fas fa-sun"></i>';
-    const moonIconHTML = '<i class="fas fa-moon"></i>';
-    const newIconHTML = theme === 'dark' ? sunIconHTML : moonIconHTML;
-    const newAriaLabel = theme === 'dark' ? 
-        (dependencies.localizationService.translate('theme.toggle.switchToLight') || 'تبديل إلى الوضع النهاري') : 
-        (dependencies.localizationService.translate('theme.toggle.switchToDark') || 'تبديل إلى الوضع الليلي');
-    
-    if (DOMElements.themeToggleInitial) {
-      DOMElements.themeToggleInitial.innerHTML = newIconHTML;
-      DOMElements.themeToggleInitial.setAttribute('title', newAriaLabel);
-      DOMElements.themeToggleInitial.setAttribute('aria-label', newAriaLabel);
-    }
-    
-    if (DOMElements.themeToggleEditor) {
-      DOMElements.themeToggleEditor.innerHTML = newIconHTML;
-      DOMElements.themeToggleEditor.setAttribute('title', newAriaLabel);
-      DOMElements.themeToggleEditor.setAttribute('aria-label', newAriaLabel);
-    }
-    
-    // تحديث لون الموضوع للمتصفح
-    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
-    
-    if (metaThemeColor) {
-      const PWA_THEME_COLOR_DARK = '#0D0D0D';
-      const PWA_THEME_COLOR_LIGHT = '#00796b';
-      
-      metaThemeColor.setAttribute('content', theme === 'dark' ? PWA_THEME_COLOR_DARK : PWA_THEME_COLOR_LIGHT);
-    }
-    
-    currentDOMTheme = theme;
-    
-    // نشر حدث تغيير الموضوع
-    dependencies.eventAggregator.publish(EVENTS.THEME_CHANGED, {
-      theme,
-      timestamp: Date.now()
-    });
-    
-    // تحديث الحالة
-    if (dependencies.stateStore && dependencies.stateStore.dispatch) {
-      dependencies.stateStore.dispatch(ACTIONS.SET_THEME, theme);
-    }
-  }
-  
+
   /**
    * تعيين المعالجات
    * @private
    */
-  function initializeEventListeners() {
+  function _initializeEventListeners() {
     const setupButtonListener = (buttonElement) => {
       if (buttonElement) {
+        // أزل أي معالج قديم قبل إضافة واحد جديد (مهم إذا تم استدعاء التهيئة أكثر من مرة)
+        buttonElement.removeEventListener('click', _handleThemeToggle);
         buttonElement.addEventListener('click', _handleThemeToggle);
+      } else {
+        (internalDeps.errorLogger.warn || console.warn).call(internalDeps.errorLogger, {
+             message: 'أحد أزرار الثيم غير موجود في DOM عند محاولة ربط الأحداث.',
+             origin: 'ThemeController._initializeEventListeners'
+         });
       }
     };
     
-    setupButtonListener(DOMElements.themeToggleInitial);
-    setupButtonListener(DOMElements.themeToggleEditor);
+    // --- استخدام internalDeps.DOMElements ---
+    if (internalDeps.DOMElements?.controls?.theme) {
+        setupButtonListener(internalDeps.DOMElements.controls.theme.initial);
+        setupButtonListener(internalDeps.DOMElements.controls.theme.editor);
+    } else {
+        (internalDeps.errorLogger.warn || console.warn).call(internalDeps.errorLogger, {
+             message: 'كائن DOMElements.controls.theme غير موجود.',
+             origin: 'ThemeController._initializeEventListeners'
+         });
+    }
+    // --- نهاية استخدام internalDeps.DOMElements ---
   }
-  
-  /**
-   * التحقق من صحة الموضوع
-   * @param {string} theme - نوع الموضوع
-   * @returns {boolean} true إذا كان الموضوع صالحًا
-   */
-  function validateTheme(theme) {
+
+  function _validateTheme(theme) {
     const validThemes = ['light', 'dark'];
-    
     if (!validThemes.includes(theme)) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+      (internalDeps.errorLogger.warn || console.warn).call(internalDeps.errorLogger, {
         message: `الموضوع غير صالح: ${theme}. يجب أن يكون 'light' أو 'dark'.`,
-        origin: 'ThemeController.validateTheme'
+        origin: 'ThemeController._validateTheme'
       });
       return false;
     }
-    
     return true;
   }
   
-  /**
-   * تطبيق الموضوع مباشرة
-   * @param {string} theme - نوع الموضوع
-   * @returns {boolean} true إذا تمت العملية بنجاح
-   */
-  function applyTheme(theme) {
-    if (!validateTheme(theme)) {
-      return false;
-    }
-    
+  function _applyThemeAndPersist(theme) {
+    if (!_validateTheme(theme)) return false;
     try {
-      _applyThemeToDOM(theme);
-      saveThemeToLocalStorage(theme);
+      _applyThemeToDOM(theme); // هذا بالفعل يرسل dispatch إذا كان currentDOMTheme قد تغير
+                               // ويفترض أن StateStore.subscribe هو الذي يستدعي هذا
+                               // يجب أن يكون التدفق: Click -> dispatch SET_THEME -> State changes -> subscribe fires -> _applyThemeToDOM
+                               // لذلك، استدعاء dispatch هنا مرة أخرى قد يكون تكرارًا أو يسبب مشكلة
+                               // لكن _applyThemeToDOM حاليًا يستدعي dispatch
+                               // لنتركها كما هي الآن، لكن هذا قد يحتاج لمراجعة لتدفق الحالة
+
+      // إذا كان الهدف من هذه الدالة هو التغيير والتخزين بغض النظر عن الحالة، فاستمر
+      _saveThemeToLocalStorage(theme);
       return true;
     } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
+      (internalDeps.errorLogger.error || console.error).call(internalDeps.errorLogger, { // استخدم error بدل handleError إذا كان API مختلفًا
         error,
-        message: `فشل في تطبيق الموضوع: ${theme}`,
-        origin: 'ThemeController.applyTheme'
+        message: `فشل في تطبيق وحفظ الموضوع: ${theme}`,
+        origin: 'ThemeController._applyThemeAndPersist'
       });
       return false;
     }
   }
-  
-  /**
-   * التحقق مما إذا كان الموضوع الداكن مفعّلًا
-   * @returns {boolean} true إذا كان الموضوع الداكن مفعّلًا
-   */
-  function isDarkTheme() {
-    return currentDOMTheme === 'dark';
-  }
-  
-  /**
-   * التحقق مما إذا كان الموضوع النهاري مفعّلًا
-   * @returns {boolean} true إذا كان الموضوع النهاري مفعّلًا
-   */
-  function isLightTheme() {
-    return currentDOMTheme === 'light';
-  }
-  
-  /**
-   * التحقق من نوع الموضوع الحالي
-   * @returns {string} نوع الموضوع ('light' أو 'dark')
-   */
-  function getActiveTheme() {
-    return currentDOMTheme;
-  }
-  
-  /**
-   * تبديل الموضوع
-   * @returns {boolean} true إذا تمت العملية بنجاح
-   */
-  function toggleTheme() {
-    const newTheme = currentDOMTheme === 'light' ? 'dark' : 'light';
-    return applyTheme(newTheme);
-  }
-  
-  /**
-   * حفظ الموضوع في localStorage
-   * @param {string} theme - نوع الموضوع
-   * @returns {boolean} true إذا تمت العملية بنجاح
-   */
-  function saveThemeToLocalStorage(theme) {
-    if (!validateTheme(theme)) {
-      return false;
-    }
-    
+
+  function _saveThemeToLocalStorage(theme) {
+    if (!_validateTheme(theme)) return false;
     try {
-      localStorage.setItem(LS_KEY_CURRENT_THEME, theme);
+      // افترض أن internalDeps.localStorageAdapter موجود أو استخدم localStorage مباشرة
+      const lsa = internalDeps.localStorageAdapter || localStorage;
+      lsa.setItem(LS_KEY_CURRENT_THEME, theme);
       return true;
     } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
+      (internalDeps.errorLogger.error || console.error).call(internalDeps.errorLogger, {
         error,
         message: `فشل في حفظ الموضوع في localStorage: ${theme}`,
-        origin: 'ThemeController.saveThemeToLocalStorage'
+        origin: 'ThemeController._saveThemeToLocalStorage'
       });
       return false;
     }
   }
-  
-  /**
-   * تحميل الموضوع من localStorage
-   * @returns {string | null} نوع الموضوع أو null إذا لم يُوجد
-   */
-  function loadThemeFromLocalStorage() {
+
+  function _loadThemeFromLocalStorage() {
     try {
-      if (typeof localStorage !== 'undefined') {
-        return localStorage.getItem(LS_KEY_CURRENT_THEME);
+      const lsa = internalDeps.localStorageAdapter || localStorage;
+      if (typeof lsa !== 'undefined') {
+        return lsa.getItem(LS_KEY_CURRENT_THEME);
       }
       return null;
     } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
+      (internalDeps.errorLogger.error || console.error).call(internalDeps.errorLogger, {
         error,
         message: 'فشل في تحميل الموضوع من localStorage',
-        origin: 'ThemeController.loadThemeFromLocalStorage'
+        origin: 'ThemeController._loadThemeFromLocalStorage'
       });
       return null;
     }
   }
   
-  /**
-   * تحديث زر التبديل للموضوع
-   * @param {string} theme - نوع الموضوع
-   */
-  function updateThemeToggleButton(theme) {
-    if (!DOMElements.themeToggleInitial && !DOMElements.themeToggleEditor) {
-      return;
-    }
+  // تعيين التبعيات الداخلية
+  // هذه الدالة ستُستدعى من initializeThemeController
+  function _setInternalDependencies(injectedDeps) {
+    // قم بدمج الاعتماديات، مع إعطاء الأولوية للـ injectedDeps
+    internalDeps.DOMElements = injectedDeps.DOMElements || internalDeps.DOMElements;
+    internalDeps.stateStore = injectedDeps.stateStore || internalDeps.stateStore;
+    internalDeps.eventAggregator = injectedDeps.eventAggregator || internalDeps.eventAggregator;
+    internalDeps.errorLogger = injectedDeps.errorLogger || internalDeps.errorLogger;
+    internalDeps.localizationServiceAPI = injectedDeps.localizationServiceAPI || internalDeps.localizationServiceAPI; // تم تغيير الاسم ليطابق
     
-    const sunIconHTML = '<i class="fas fa-sun"></i>';
-    const moonIconHTML = '<i class="fas fa-moon"></i>';
-    const newIconHTML = theme === 'dark' ? sunIconHTML : moonIconHTML;
-    const newAriaLabel = theme === 'dark' ? 
-        (dependencies.localizationService.translate('theme.toggle.switchToLight') || 'تبديل إلى الوضع النهاري') : 
-        (dependencies.localizationService.translate('theme.toggle.switchToDark') || 'تبديل إلى الوضع الليلي');
-    
-    if (DOMElements.themeToggleInitial) {
-      DOMElements.themeToggleInitial.innerHTML = newIconHTML;
-      DOMElements.themeToggleInitial.setAttribute('title', newAriaLabel);
-      DOMElements.themeToggleInitial.setAttribute('aria-label', newAriaLabel);
-    }
-    
-    if (DOMElements.themeToggleEditor) {
-      DOMElements.themeToggleEditor.innerHTML = newIconHTML;
-      DOMElements.themeToggleEditor.setAttribute('title', newAriaLabel);
-      DOMElements.themeToggleEditor.setAttribute('aria-label', newAriaLabel);
-    }
-  }
-  
-  /**
-   * التحقق من تفعيل الوضع الداكن
-   * @returns {boolean} true إذا كان الوضع الداكن مفعّلًا
-   */
-  function isDarkModeEnabled() {
-    return document.body.classList.contains('dark-theme');
-  }
-  
-  /**
-   * التحقق من تفعيل الوضع النهاري
-   * @returns {boolean} true إذا كان الوضع النهاري مفعّلًا
-   */
-  function isLightModeEnabled() {
-    return document.body.classList.contains('light-theme');
-  }
-  
-  /**
-   * تعيين الموضوع بناءً على تفضيل المستخدم
-   * @param {string} [theme='auto'] - نوع الموضوع أو 'auto' لاستخدام التفضيلات
-   * @returns {boolean} true إذا تمت العملية بنجاح
-   */
-  function setThemeBasedOnUserPreference(theme = 'auto') {
-    if (theme === 'auto') {
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      theme = prefersDark ? 'dark' : 'light';
-    }
-    
-    return applyTheme(theme);
-  }
-  
-  /**
-   * تعيين الموضوع بناءً على تفضيل المستخدم
-   * @returns {boolean} true إذا تمت العملية بنجاح
-   */
-  function autoDetectAndSetTheme() {
-    try {
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const detectedTheme = prefersDark ? 'dark' : 'light';
-      
-      if (currentDOMTheme !== detectedTheme) {
-        applyTheme(detectedTheme);
-      }
-      return true;
-    } catch (error) {
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        error,
-        message: 'فشل في اكتشاف الموضوع.',
-        origin: 'ThemeController.autoDetectAndSetTheme'
-      });
-      return false;
-    }
-  }
-  
-  /**
-   * تعيين الموضوع بناءً على تفضيل المستخدم
-   * @param {string} [theme='auto'] - نوع الموضوع أو 'auto' لاستخدام التفضيلات
-   * @param {boolean} [persist=true] - هل يتم حفظه في localStorage
-   * @returns {boolean} true إذا تمت العملية بنجاح
-   */
-  function setTheme(theme = 'auto', persist = true) {
-    if (theme === 'auto') {
-      return autoDetectAndSetTheme();
-    }
-    
-    const success = applyTheme(theme);
-    
-    if (success && persist) {
-      saveThemeToLocalStorage(theme);
-    }
-    
-    return success;
-  }
-  
-  /**
-   * تعيين المعالجات
-   * @param {ThemeControllerDependencies} injectedDeps - التبعيات المُدخلة
-   */
-  function _setDependencies(injectedDeps) {
-    if (injectedDeps.stateStore) dependencies.stateStore = injectedDeps.stateStore;
-    if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
-    if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
-    if (injectedDeps.localizationService) dependencies.localizationService = injectedDeps.localizationService;
-  }
-  
-  /**
-   * التحقق من تفعيل الموضوع
-   * @returns {boolean} true إذا كان الموضوع مفعّلًا
-   */
-  function isThemeApplied() {
-    return isDarkModeEnabled() || isLightModeEnabled();
-  }
-  
-  /**
-   * تعيين الموضوع الافتراضي
-   * @returns {boolean} true إذا تمت العملية بنجاح
-   */
-  function setDefaultTheme() {
-    const savedTheme = loadThemeFromLocalStorage();
-    
-    if (savedTheme && validateTheme(savedTheme)) {
-      return applyTheme(savedTheme);
-    }
-    
-    return applyTheme('light');
-  }
-  
-  /**
-   * تعيين الموضوع من خلال الحالة
-   * @param {ThemeControllerDependencies} injectedDeps - التبعيات
-   */
-  function initializeThemeFromState(injectedDeps) {
-    const { stateStore } = injectedDeps;
-    
-    if (!stateStore || !stateStore.getState || !stateStore.dispatch) {
-      return;
-    }
-    
-    const state = stateStore.getState();
-    
-    if (state && state.currentTheme) {
-      applyTheme(state.currentTheme);
-    } else {
-      setDefaultTheme();
-    }
-  }
-  
-  /**
-   * تهيئة الموضوع
-   * @param {ThemeControllerDependencies} injectedDeps - التبعيات
-   */
-  function initializeThemeController(injectedDeps) {
-    try {
-      console.info('[ThemeController] تم تهيئته بنجاح');
-      
-      // جعل الموضوع متاحًا عالميًا لتسهيل التصحيح
-      if (typeof window !== 'undefined' && 
-          (typeof process === 'undefined' || process.env.NODE_ENV === 'development')) {
-        window.themeController = {
-          ...themeController
-        };
-      }
-      
-      // تعيين التبعيات
-      if (injectedDeps && (injectedDeps.stateStore || injectedDeps.errorLogger || injectedDeps.localizationService)) {
-        themeController._setDependencies({
-          stateStore: injectedDeps.stateStore || {
-            getState: () => ({ currentTheme: 'light' }),
-            dispatch: () => {},
-            subscribe: () => ({ unsubscribe: () => {} })
-          },
-          errorLogger: injectedDeps.errorLogger || console,
-          localizationService: injectedDeps.localizationService || {
-            translate: (key) => key
-          }
-        });
-      }
-      
-      // تعيين مراقبي الأحداث
-      if (DOMElements.themeToggleInitial || DOMElements.themeToggleEditor) {
-        initializeEventListeners();
-      }
-      
-      // تعيين الموضوع من خلال الحالة
-      if (injectedDeps.stateStore) {
-        const unsubscribe = injectedDeps.stateStore.subscribe((newState) => {
-          if (newState && typeof newState.currentTheme === 'string' && newState.currentTheme !== currentDOMTheme) {
-            applyTheme(newState.currentTheme);
-          }
-        });
-        
-        if (typeof unsubscribe === 'function') {
-          themeController.unsubscribe = unsubscribe;
-        }
-      }
-      
-      // تحميل الموضوع من localStorage
-      const savedTheme = loadThemeFromLocalStorage();
-      
-      if (savedTheme && validateTheme(savedTheme)) {
-        applyTheme(savedTheme);
-      }
-      
-      return {
-        ...themeController,
-        applyTheme,
-        isDarkTheme,
-        isLightTheme,
-        getActiveTheme,
-        toggleTheme,
-        saveThemeToLocalStorage,
-        loadThemeFromLocalStorage,
-        isThemeApplied,
-        setThemeBasedOnUserPreference
-      };
-    } catch (error) {
-      console.error('[ThemeController] فشل في التهيئة:', error);
-      return {};
-    }
+    console.log('[ThemeController] Dependencies set:', internalDeps); // للتصحيح
   }
 
-  return {
-    _setDependencies,
-    applyTheme,
-    isDarkTheme,
-    isLightTheme,
-    getActiveTheme,
-    toggleTheme,
-    saveThemeToLocalStorage,
-    loadThemeFromLocalStorage,
-    isThemeApplied,
-    setThemeBasedOnUserPreference,
-    setDefaultTheme,
-    setTheme,
-    updateThemeToggleButton,
-    isDarkModeEnabled,
-    isLightModeEnabled
+  function getActiveThemeInternal() {
+    return currentDOMTheme;
+  }
+
+  // الدوال العامة التي سيتم إرجاعها بواسطة initializeThemeController
+  const publicAPI = {
+    setDependencies: _setInternalDependencies, // لتسهيل التهيئة من الخارج
+    applyTheme: _applyThemeAndPersist, // هذه تطبق وتحفظ
+    getActiveTheme: getActiveThemeInternal,
+    toggleTheme: () => {
+        const newTheme = currentDOMTheme === 'light' ? 'dark' : 'light';
+        // بدلاً من استدعاء _applyThemeAndPersist، اترك الحالة تقود التغيير
+        internalDeps.stateStore.dispatch(ACTIONS.SET_THEME, newTheme);
+        // الـ subscriber على StateStore سيتولى تطبيق الثيم على DOM
+        // ولكن قد تحتاج أيضًا للحفظ في localStorage هنا إذا لم يكن subscriber يفعل ذلك
+        _saveThemeToLocalStorage(newTheme); // <--- أضف هذا للحفظ الفوري
+        return true; // أو يمكنك إرجاع newTheme
+    },
+    initializeEventListeners: _initializeEventListeners, // اجعلها جزءًا من الواجهة العامة ليتم استدعاؤها بعد التهيئة
+    loadThemeFromLocalStorage: _loadThemeFromLocalStorage, // اجعلها عامة
+    // _validateTheme يمكن أن تكون داخلية فقط
   };
-})();
 
-/**
- * تهيئة مدير الموضوعات
- * @param {ThemeControllerDependencies} dependencies - التبعيات
- */
-export function initializeThemeController(dependencies) {
-  try {
-    console.info('[ThemeController] تم تهيئته بنجاح');
+  // دالة التهيئة الأولية للوحدة التي يتم استدعاؤها بواسطة moduleBootstrap
+  // وستُرجع الواجهة العامة publicAPI
+  function init(dependencies) {
+    _setInternalDependencies(dependencies); // حقن الاعتماديات الفعلية
     
-    // جعل الموضوع متاحًا عالميًا لتسهيل التصحيح
-    if (typeof window !== 'undefined' && 
-        (typeof process === 'undefined' || process.env.NODE_ENV === 'development')) {
-      window.themeController = {
-        ...themeController
-      };
-    }
-    
-    // تعيين التبعيات
-    if (dependencies && (dependencies.stateStore || dependencies.errorLogger || dependencies.localizationService)) {
-      themeController._setDependencies({
-        stateStore: dependencies.stateStore || {
-          getState: () => ({ currentTheme: 'light' }),
-          dispatch: () => {},
-          subscribe: () => ({ unsubscribe: () => {} })
-        },
-        errorLogger: dependencies.errorLogger || console,
-        localizationService: dependencies.localizationService || {
-          translate: (key) => key
+    _initializeEventListeners(); // ربط الأحداث بأزرار الثيم
+
+    // الاشتراك في تغييرات الحالة لتطبيق الثيم عند تغيره في StateStore
+    if (internalDeps.stateStore && typeof internalDeps.stateStore.subscribe === 'function') {
+      const unsubscribe = internalDeps.stateStore.subscribe((newState, oldState) => {
+        const newThemeInState = newState?.currentTheme || newState?.appSettings?.currentTheme;
+        if (newThemeInState && _validateTheme(newThemeInState) && newThemeInState !== currentDOMTheme) {
+          _applyThemeToDOM(newThemeInState); // طبق على DOM فقط، لا تقم بـ dispatch مرة أخرى
+          // الحفظ في localStorage يجب أن يتم عند تغيير الحالة أو بواسطة dispatch SET_THEME إذا أردت
+          // إذا لم يتم الحفظ عند تغيير الحالة، قم بالحفظ هنا أيضًا.
+          _saveThemeToLocalStorage(newThemeInState);
         }
       });
-    }
-    
-    // تعيين مراقبي الأحداث
-    if (DOMElements.themeToggleInitial || DOMElements.themeToggleEditor) {
-      themeController.initializeEventListeners();
-    }
-    
-    // تعيين الموضوع من خلال الحالة
-    if (dependencies.stateStore) {
-      const unsubscribe = dependencies.stateStore.subscribe((newState) => {
-        if (newState && typeof newState.currentTheme === 'string' && newState.currentTheme !== themeController.getActiveTheme()) {
-          themeController.applyTheme(newState.currentTheme);
-        }
-      });
-      
-      if (typeof unsubscribe === 'function') {
-        themeController.unsubscribe = unsubscribe;
-      }
-    }
-    
-    // تحميل الموضوع من localStorage
-    const savedTheme = themeController.loadThemeFromLocalStorage();
-    
-    if (savedTheme && themeController.validateTheme(savedTheme)) {
-      themeController.applyTheme(savedTheme);
+      // يمكنك تخزين unsubscribe إذا أردت إلغاء الاشتراك لاحقًا
+      publicAPI.unsubscribeState = unsubscribe; 
     } else {
-      themeController.setDefaultTheme();
+        (internalDeps.errorLogger.warn || console.warn).call(internalDeps.errorLogger, {
+            message: 'StateStore أو دالة subscribe غير متاحة. لن يتم تحديث الثيم بناءً على تغييرات الحالة.',
+            origin: 'ThemeController.init'
+        });
     }
+
+    // تحميل الثيم الأولي من localStorage أو الحالة وتطبيقه
+    const state = internalDeps.stateStore.getState();
+    const initialThemeFromState = state?.currentTheme || state?.appSettings?.currentTheme;
+    const themeFromStorage = _loadThemeFromLocalStorage();
     
-    return {
-      ...themeController,
-      applyTheme: themeController.applyTheme,
-      isDarkTheme: themeController.isDarkTheme,
-      isLightTheme: themeController.isLightTheme,
-      getActiveTheme: themeController.getActiveTheme,
-      toggleTheme: themeController.toggleTheme,
-      saveThemeToLocalStorage: themeController.saveThemeToLocalStorage,
-      loadThemeFromLocalStorage: themeController.loadThemeFromLocalStorage,
-      isThemeApplied: themeController.isThemeApplied,
-      setThemeBasedOnUserPreference: themeController.setThemeBasedOnUserPreference,
-      setDefaultTheme: themeController.setDefaultTheme,
-      updateThemeToggleButton: themeController.updateThemeToggleButton,
-      isDarkModeEnabled: themeController.isDarkModeEnabled,
-      isLightModeEnabled: themeController.isLightModeEnabled
-    };
-  } catch (error) {
-    console.error('[ThemeController] فشل في التهيئة:', error);
-    return {};
+    let themeToApply = 'light'; // افتراضي
+
+    if (initialThemeFromState && _validateTheme(initialThemeFromState)) {
+        themeToApply = initialThemeFromState;
+    } else if (themeFromStorage && _validateTheme(themeFromStorage)) {
+        themeToApply = themeFromStorage;
+    }
+    // قد ترغب في إرسال هذا الثيم الأولي إلى الحالة إذا لم يكن موجودًا
+    if (themeToApply !== initialThemeFromState) {
+        internalDeps.stateStore.dispatch(ACTIONS.SET_THEME, themeToApply);
+    }
+    _applyThemeToDOM(themeToApply); // طبق الثيم المختار أخيرًا
+
+    (internalDeps.errorLogger.info || console.info).call(internalDeps.errorLogger, `[ThemeController] Initialized. Applied theme: ${themeToApply}`);
+
+    return publicAPI; // أرجع الواجهة العامة
   }
+  
+  // الكائن الذي يحتوي على دالة init هو ما يتم تصديره لـ moduleBootstrap
+  return { init };
+
+})(); // نهاية الـ IIFE
+
+// الدالة المصدرة التي سيستخدمها moduleBootstrap كـ initFn
+export function initializeThemeController(dependencies) {
+  // themeControllerInternal الآن هو الكائن الذي يحتوي على دالة init
+  // dependencies ستحتوي على DOMElements من moduleBootstrap
+  return themeControllerInternal.init(dependencies);
 }
 
-export default themeController;
+// يمكنك أيضًا تصدير الواجهة مباشرة إذا كنت لن تستخدم moduleBootstrap دائمًا
+// export default themeControllerInternal.init; // أو publicAPI إذا أردت ذلك مباشرة
