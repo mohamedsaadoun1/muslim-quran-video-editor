@@ -1,3 +1,4 @@
+---
 name: AI Super Agent
 
 on:
@@ -7,9 +8,12 @@ on:
 jobs:
   ai-super-agent:
     runs-on: ubuntu-latest
-    if: |
+    if: >
       github.event.issue.title == 'AI Super Agent' || github.event.issue.title == 'وكيل الذكاء الكامل'
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           pip install "open-interpreter[all]" huggingface-hub
@@ -18,8 +22,10 @@ jobs:
       - name: Prepare prompt
         id: prompt
         run: |
-          COMMENT="$(echo "${{ github.event.comment.body }}" | sed 's/"/\\"/g')"
-          echo "prompt=$COMMENT" >> $GITHUB_OUTPUT
+          COMMENT="${{ github.event.comment.body }}"
+          echo "prompt<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Discover available models in token
         id: models
@@ -30,14 +36,14 @@ jobs:
           import requests, os, json
           headers = {"Authorization": f"Bearer {os.environ['HF_API_KEY']}"}
           response = requests.get("https://huggingface.co/api/authorized", headers=headers)
-          my_user = response.json().get("user", {}).get("name","")
+          my_user = response.json().get("user", {}).get("name", "")
           list_resp = requests.get("https://huggingface.co/api/models?full=true", headers=headers)
           models = []
           for m in list_resp.json():
               if (
-                (m.get("private") or my_user in m.get("id","")) and
+                (m.get("private") or my_user in m.get("id", "")) and
                 m.get("pipeline_tag") in (
-                  "text-generation","text2text-generation","conversational","chat","code","text"
+                  "text-generation", "text2text-generation", "conversational", "chat", "code", "text"
                 )
               ):
                   models.append(m["id"])
@@ -49,9 +55,8 @@ jobs:
                   "google/gemma-7b-it",
                   "microsoft/Phi-3-mini-4k-instruct"
               ]
-          print(f"models={json.dumps(models[:8])}")
-          with open("models.txt","w") as f:
-              [f.write(m+"\n") for m in models[:8]]
+          with open("models.txt", "w") as f:
+              [f.write(m + "\n") for m in models[:8]]
           EOF
 
       - name: Read all project files and structure
@@ -66,12 +71,11 @@ jobs:
         run: |
           PROMPT="${{ steps.prompt.outputs.prompt }}"
           TREE="$(cat project_tree.txt)"
-          ALLFILES="$(head -c 50000 all_project_files.txt)" # Limit to 50K chars for token safety
+          ALLFILES="$(head -c 50000 all_project_files.txt)"
           AI_PROMPT="انت وكيل ذكي على مشروع برمجي كامل. هيكل المشروع:\n$TREE\n\nملفات المشروع (مختصر):\n$ALLFILES\n\nالأمر أو الطلب:\n$PROMPT\n\nملاحظة: يمكنك حذف أو تعديل أو إعادة أي ملف أو إنشاء ملفات أو مشاريع جديدة بالكامل، ويمكنك الرجوع عن أي حذف إذا طلب منك ذلك، وكل تغيير يتم عبر commit منفصل ليسهل الرجوع. إذا طلب المستخدم استرجاع شيء احذفته سابقًا، استرجع أحدث نسخة منه من git. كل أمر تنفذه اكتب معه شرح مختصر جدًا لما تم فعله."
 
           echo "$AI_PROMPT" > ai_super_prompt.txt
 
-          # شغل الذكاء الاصطناعي على كل نموذج
           echo "" > ai_super_responses.md
           while read MODEL; do
               echo -e "\n\n## [$MODEL]" >> ai_super_responses.md
@@ -80,7 +84,6 @@ jobs:
 
       - name: Apply AI Proposed Changes (if any)
         run: |
-          # يبحث في ai_super_responses.md عن أكواد bash أو git أو أوامر تعديل ملفات وينفذها
           grep -E '^(git |echo |rm |mv |cp |mkdir |cat |touch )' ai_super_responses.md > ai_commands.sh || true
           if [ -s ai_commands.sh ]; then
             bash ai_commands.sh || true
@@ -92,7 +95,7 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add . || true
           git commit -am "AI Super Agent: تنفيذ أوامر المستخدم و/أو تعديلات المشروع" || exit 0
-          git push
+          git push || true
 
       - name: Reply to Issue (with report)
         env:
