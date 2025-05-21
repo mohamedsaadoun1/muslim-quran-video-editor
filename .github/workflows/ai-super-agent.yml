@@ -51,10 +51,18 @@ jobs:
         run: |
           cat << 'EOP' > get_models.py
 import requests, os, json
-headers = {"Authorization": f"Bearer {os.environ['HF_API_KEY']}"}
-response = requests.get("https://huggingface.co/api/authorized ", headers=headers)
+headers = {
+  "Authorization": f"Bearer {os.environ['HF_API_KEY']}"
+}
+response = requests.get(
+  "https://huggingface.co/api/authorized ", 
+  headers=headers
+)
 my_user = response.json().get("user", {}).get("name", "")
-list_resp = requests.get("https://huggingface.co/api/models?full=true ", headers=headers)
+list_resp = requests.get(
+  "https://huggingface.co/api/models?full=true ", 
+  headers=headers
+)
 models = []
 for m in list_resp.json():
     if (
@@ -100,7 +108,8 @@ EOP
             if [ $FILE_COUNT -ge ${{ env.MAX_FILES }} ]; then break; fi
             if [ -f "$FILE" ]; then
               FILE_SIZE=$(wc -c <"$FILE")
-              if [ $((CURRENT_SIZE + FILE_SIZE)) -le ${{ env.MAX_FILE_SIZE }} ]; then
+              if [ $((CURRENT_SIZE + FILE_SIZE)) -le \
+                ${{ env.MAX_FILE_SIZE }} ]; then
                 echo "===== $FILE =====" >> all_project_files.txt
                 cat "$FILE" >> all_project_files.txt
                 echo "" >> all_project_files.txt
@@ -112,7 +121,16 @@ EOP
           
           ALLFILES="$(cat all_project_files.txt)"
           
-          AI_PROMPT="You are a smart agent working on a complete software project. Project structure:\n$TREE\n\nProject files (limited to ${{ env.MAX_FILES }} files and $((MAX_FILE_SIZE/1000))KB total):\n$ALLFILES\n\nUser request:\n$PROMPT\n\nNote: You can delete, modify, or recreate any file or create new files/projects entirely. Each change should be made in a separate commit for easy rollback. If the user requests to restore something you previously deleted, retrieve the latest version from git. For each action you perform, write a very brief explanation of what was done."
+          AI_PROMPT="You are a smart agent working on a complete \
+software project. Project structure:\n$TREE\n\nProject files \
+(limited to ${{ env.MAX_FILES }} files and $((MAX_FILE_SIZE/1000))KB total):\n\
+$ALLFILES\n\nUser request:\n$PROMPT\n\nNote: You can delete, \
+modify, or recreate any file or create new files/projects \
+entirely. Each change should be made in a separate commit for \
+easy rollback. If the user requests to restore something you \
+previously deleted, retrieve the latest version from git. For \
+each action you perform, write a very brief explanation of \
+what was done."
 
           echo "$AI_PROMPT" > ai_super_prompt.txt
 
@@ -157,8 +175,8 @@ EOP
           
           if [ -n "$(git status --porcelain)" ]; then
             git add . || echo "Failed to add files"
-            git commit -am "AI Super Agent: Implementing user request" || echo "Commit failed"
-            
+            git commit -am "AI Super Agent: Implementing user request" || \
+              echo "Commit failed"
             git push || echo "Push failed"
           else
             echo "No changes to commit"
@@ -174,4 +192,5 @@ EOP
         if: always()
         run: |
           rm -f ai_super_prompt.txt ai_super_responses.md ai_commands.sh 
-          rm -f models.txt project_files.txt project_tree.txt all_project_files.txt get_models.py
+          rm -f models.txt project_files.txt project_tree.txt all_project_files.txt 
+          rm -f get_models.py
