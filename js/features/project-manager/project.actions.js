@@ -70,6 +70,7 @@ const projectActions = (() => {
     return {
       ...defaultProject,
       id: _generateProjectId(),
+      projectType: initialOverrides.projectType || defaultProject.projectType || 'quranic',
       title: initialOverrides.title || defaultProject.title || 'مشروع جديد',
       createdAt: now,
       updatedAt: now,
@@ -416,13 +417,17 @@ const projectActions = (() => {
     const defaultStructure = JSON.parse(JSON.stringify(DEFAULT_PROJECT_SCHEMA));
     
     return {
-      ...defaultStructure,
+      ...defaultStructure, // defaultStructure should have projectType: 'quranic'
       ...project,
-      quranSelection: { 
-        ...defaultStructure.quranSelection, 
-        ...(project.quranSelection || {}) 
+      projectType: project.projectType || defaultStructure.projectType || 'quranic',
+      quranSelection: {
+        ...defaultStructure.quranSelection, // This will have selectedTranslationIds: []
+        ...(project.quranSelection || {}),
+        selectedTranslationIds: (project.quranSelection && Array.isArray(project.quranSelection.selectedTranslationIds))
+                                  ? project.quranSelection.selectedTranslationIds
+                                  : (defaultStructure.quranSelection.selectedTranslationIds || [])
       },
-      background: { 
+      background: {
         ...defaultStructure.background, 
         ...(project.background || {}) 
       },
@@ -437,8 +442,20 @@ const projectActions = (() => {
       exportSettings: { 
         ...defaultStructure.exportSettings, 
         ...(project.exportSettings || {}) 
+      },
+      backgroundAudio: { // Ensure backgroundAudio is hydrated
+        ...defaultStructure.backgroundAudio,
+        ...(project.backgroundAudio || {})
       }
     };
+  }
+
+  /**
+   * Placeholder for future auto-save functionality.
+   */
+  function initAutoSave() {
+    // console.log("Auto-save mechanism to be implemented.");
+    // This function will later set up intervals or event listeners for auto-saving.
   }
   
   /**
@@ -473,7 +490,8 @@ const projectActions = (() => {
     loadExistingProjectById,
     saveCurrentProject,
     deleteProjectById,
-    loadAllSavedProjectsFromStorage
+    loadAllSavedProjectsFromStorage,
+    initAutoSave // Placeholder
   };
 })();
 

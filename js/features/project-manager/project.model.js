@@ -6,14 +6,30 @@ import {
 import notificationPresenter from '../../shared-ui-components/notification.presenter.js';
 
 /**
+ * @typedef {Object} WordTiming
+ * @property {string} text - The word text (from API)
+ * @property {number} startTime - Start time in milliseconds (from API)
+ * @property {number} endTime - End time in milliseconds (from API)
+ * @property {boolean} [isCustomSegment] - Flag if this is a user-defined segment rather than an API word
+ * @property {string} [customText] - User-defined text for custom segment
+ */
+
+/**
+ * @typedef {Object} AyahTimingData
+ * @property {number} durationSec - Total duration of the ayah audio in seconds.
+ * @property {Array<WordTiming>} [words] - Array of word timings from the API or custom segments.
+ * @property {string} [audioUrl] - The URL of the audio file for this ayah.
+ */
+
+/**
  * @typedef {Object} QuranSelectionModel
  * @property {number} surahId - رقم السورة (1-114)
  * @property {number} startAyah - بداية الآية داخل السورة
  * @property {number} endAyah - نهاية الآية داخل السورة
  * @property {string} reciterId - معرف القارئ/audio الإصدار
- * @property {string | null} translationId - معرف الترجمة
+ * @property {string[]} selectedTranslationIds - قائمة بمعرفات الترجمة/التفسير المختارة
  * @property {number} delayBetweenAyahs - تأخير الآيات بالثواني
- * @property {Object.<number, {start: number, end: number}>} [ayahTimings] - توقيتات الآيات (المفتاح: رقم الآية العالمي)
+ * @property {Object.<number, AyahTimingData>} [ayahTimings] - Key: globalAyahNumber. Stores fetched timing data.
  */
 
 /**
@@ -86,6 +102,7 @@ import notificationPresenter from '../../shared-ui-components/notification.prese
 /**
  * @typedef {Object} ProjectModelSchema
  * @property {string} id - معرف فريد للمشروع
+ * @property {'quranic' | 'regular'} projectType - نوع المشروع
  * @property {string} title - عنوان المشروع المُحدد من المستخدم
  * @property {number} createdAt - وقت الإنشاء (مللي ثانية)
  * @property {number} updatedAt - وقت آخر تحديث (مللي ثانية)
@@ -94,7 +111,18 @@ import notificationPresenter from '../../shared-ui-components/notification.prese
  * @property {TextStyleModel} textStyle - نمط النص
  * @property {VideoCompositionModel} videoComposition - إعدادات الفيديو
  * @property {ExportSettingsModel} exportSettings - إعدادات التصدير
+ * @property {BackgroundAudioState} backgroundAudio - إعدادات صوت الخلفية المُحمَّل
  * // إضافة خصائص أخرى عند الحاجة
+ */
+
+/**
+ * @typedef {Object} BackgroundAudioState
+ * @property {string | null} fileObjectURL - Object URL of the audio file
+ * @property {string | null} fileName - Name of the audio file
+ * @property {number} volume - Volume level (0 to 1)
+ * @property {boolean} loop - Whether the audio should loop
+ * @property {boolean} isPlaying - Current playback state (controlled by mixer)
+ * @property {number | null} duration - Duration of the audio file in seconds
  */
 
 // --- إعدادات افتراضية ---
@@ -105,6 +133,7 @@ import notificationPresenter from '../../shared-ui-components/notification.prese
 export const defaultProjectSchema = {
   ...DEFAULT_PROJECT_SCHEMA,
   id: _generateId(),
+  projectType: 'quranic', // Default project type
   title: DEFAULT_PROJECT_SCHEMA.title || 'مشروع جديد',
   createdAt: Date.now(),
   updatedAt: Date.now(),
@@ -113,9 +142,9 @@ export const defaultProjectSchema = {
     startAyah: null,
     endAyah: null,
     reciterId: null,
-    translationId: null,
+    selectedTranslationIds: [], // Changed from translationId: null
     delayBetweenAyahs: Math.max(0.5, Math.min(5, DEFAULT_PROJECT_SCHEMA.quranSelection.delayBetweenAyahs || 1.0)),
-    ayahTimings: {}
+    ayahTimings: {} // Ensures it's initialized as an empty object
   },
   background: {
     type: 'solid',
@@ -167,8 +196,16 @@ export const defaultProjectSchema = {
     quality: 'high',
     includeSubtitles: true,
     includeAudio: true,
-    includeBackgroundMusic: true,
+    includeBackgroundMusic: true, // This relates to videoComposition.enableBackgroundMusic
     includeTextAnimation: true
+  },
+  backgroundAudio: { // New property for uploaded background audio
+    fileObjectURL: null,
+    fileName: null,
+    volume: 0.3, // Default volume
+    loop: true,   // Default loop state
+    isPlaying: false, // Default playback state
+    duration: null
   }
 };
 
@@ -202,6 +239,7 @@ export function createNewProject(initialOverrides = {}) {
     // إنشاء كائن المشروع الأساسي
     const newProjectData = {
       id: initialOverrides.id || _generateId(),
+      projectType: initialOverrides.projectType || defaultProject.projectType || 'quranic',
       title: initialOverrides.title || defaultProject.title || 'مشروع جديد',
       createdAt: initialOverrides.createdAt || now,
       updatedAt: initialOverrides.updatedAt || now,
@@ -213,14 +251,30 @@ export function createNewProject(initialOverrides = {}) {
       'background', 
       'textStyle', 
       'videoComposition', 
-      'exportSettings'
+      'exportSettings',
+      'backgroundAudio' // Added new nested key
     ];
     
     nestedKeys.forEach(key => {
-      newProjectData[key] = {
-        ...(defaultProject[key] || {}),
-        ...(initialOverrides[key] || {})
-      };
+      if (key === 'quranSelection') {
+        newProjectData[key] = {
+          ...(defaultProject[key] || {}),
+          ...(initialOverrides[key] || {}),
+          selectedTranslationIds: (initialOverrides[key]?.selectedTranslationIds && Array.isArray(initialOverrides[key].selectedTranslationIds))
+                                    ? initialOverrides[key].selectedTranslationIds
+                                    : (defaultProject[key]?.selectedTranslationIds || [])
+        };
+      } else if (key === 'backgroundAudio') {
+        newProjectData[key] = {
+          ...(defaultProject[key] || {}), // Default backgroundAudio settings
+          ...(initialOverrides[key] || {})  // User overrides for backgroundAudio
+        };
+      } else {
+        newProjectData[key] = {
+          ...(defaultProject[key] || {}),
+          ...(initialOverrides[key] || {})
+        };
+      }
     });
     
     // التأكد من أن aiSuggestions موجود
@@ -293,6 +347,11 @@ export function validateProjectData(projectData) {
     errors.push('معرف المشروع مطلوب ويجب أن يكون نصًا');
   }
   
+  // التحقق من صحة نوع المشروع
+  if (typeof projectData.projectType !== 'string' || !['quranic', 'regular'].includes(projectData.projectType)) {
+    errors.push('نوع المشروع يجب أن يكون "quranic" أو "regular"');
+  }
+  
   // التحقق من صحة العنوان
   if (typeof projectData.title !== 'string') {
     errors.push('عنوان المشروع يجب أن يكون نصًا');
@@ -308,17 +367,22 @@ export function validateProjectData(projectData) {
   }
   
   // التحقق من صحة الكائنات الفرعية
-  const nestedObjects = ['quranSelection', 'background', 'textStyle', 'videoComposition', 'exportSettings'];
+  const nestedObjects = ['quranSelection', 'background', 'textStyle', 'videoComposition', 'exportSettings', 'backgroundAudio'];
   
   nestedObjects.forEach(key => {
     if (typeof projectData[key] !== 'object' || projectData[key] === null) {
-      errors.push(`${key} بيانات المشروع مطلوبة ويجب أن تكون كائنًا`);
+      // Allow backgroundAudio to be null if not set, but if it exists, validate its properties
+      if (key === 'backgroundAudio' && projectData[key] === null) {
+        // This is acceptable, means no background audio uploaded
+      } else if (projectData[key] === null || typeof projectData[key] !== 'object') {
+         errors.push(`${key} بيانات المشروع مطلوبة ويجب أن تكون كائنًا`);
+      }
     }
   });
   
   // التحقق من صحة الآيات
   if (projectData.quranSelection) {
-    const { surahId, startAyah, endAyah } = projectData.quranSelection;
+    const { surahId, startAyah, endAyah, selectedTranslationIds } = projectData.quranSelection;
     
     if (surahId && (typeof surahId !== 'number' || surahId < 1 || surahId > 114)) {
       errors.push('رقم السورة غير صحيح');
@@ -331,6 +395,14 @@ export function validateProjectData(projectData) {
     if (endAyah && (typeof endAyah !== 'number' || endAyah < 1)) {
       errors.push('رقم الآية النهاية غير صحيح');
     }
+
+    if (!Array.isArray(selectedTranslationIds)) {
+      errors.push('selectedTranslationIds يجب أن تكون مصفوفة');
+    }
+    // Optionally, validate that elements of selectedTranslationIds are strings
+    // if (selectedTranslationIds.some(id => typeof id !== 'string')) {
+    //   errors.push('كل عنصر في selectedTranslationIds يجب أن يكون نصًا');
+    // }
   }
   
   // التحقق من صحة الخلفية
@@ -378,6 +450,24 @@ export function validateProjectData(projectData) {
     if (fps && (typeof fps !== 'number' || fps < 10 || fps > 60)) {
       errors.push('عدد الإطارات في الثانية يجب أن يكون بين 10 و 60');
     }
+  }
+
+  // Validate backgroundAudio properties if it exists
+  if (projectData.backgroundAudio) {
+    const { volume, loop, fileName, fileObjectURL } = projectData.backgroundAudio;
+    if (typeof volume !== 'number' || volume < 0 || volume > 1) {
+      errors.push('مستوى صوت الخلفية يجب أن يكون رقمًا بين 0 و 1');
+    }
+    if (typeof loop !== 'boolean') {
+      errors.push('خاصية التكرار لصوت الخلفية يجب أن تكون قيمة منطقية (boolean)');
+    }
+    if (fileName !== null && typeof fileName !== 'string') {
+      errors.push('اسم ملف صوت الخلفية يجب أن يكون نصًا أو null');
+    }
+    if (fileObjectURL !== null && typeof fileObjectURL !== 'string') {
+       errors.push('رابط Object URL لصوت الخلفية يجب أن يكون نصًا أو null');
+    }
+    // isPlaying and duration are runtime states, typically not validated here unless set by user.
   }
   
   return {
@@ -677,7 +767,8 @@ export function createProjectFromVerseText(verseText, title = 'مشروع جدي
         surahId: null,
         startAyah: null,
         endAyah: null,
-        customText: verseText
+        customText: verseText,
+        selectedTranslationIds: [] // Initialize for createProjectFromVerseText
       },
       background: {
         ...defaultProjectSchema.background,
@@ -729,7 +820,8 @@ export function createProjectFromSurah(surahId, startAyah, endAyah, title = 'م�
         ...defaultProjectSchema.quranSelection,
         surahId,
         startAyah,
-        endAyah
+        endAyah,
+        selectedTranslationIds: [] // Initialize for createProjectFromSurah
       },
       background: {
         ...defaultProjectSchema.background,
