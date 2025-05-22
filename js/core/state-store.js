@@ -9,22 +9,14 @@
 const stateStore = (() => {
   // --- تعريفات JSDoc للحالة ---
   /**
-   * @typedef {import('../features/project-manager/project.model.js').WordTiming} WordTiming
-   */
-
-  /**
-   * @typedef {import('../features/project-manager/project.model.js').AyahTimingData} AyahTimingData
-   */
-
-  /**
    * @typedef {Object} QuranSelectionState
    * @property {number | null} surahId
    * @property {number | null} startAyah
    * @property {number | null} endAyah
    * @property {string | null} reciterId
-   * @property {string[]} selectedTranslationIds // Replaced translationId
+   * @property {string | null} translationId
    * @property {number} delayBetweenAyahs
-   * @property {Object.<number, AyahTimingData>} [ayahTimings] // المفتاح هو رقم الآية العالمي
+   * @property {Object.<number, {start: number, end: number, text?: string, translationText?: string}>} [ayahTimings] // المفتاح هو رقم الآية العالمي
    * @property {Array<PlaylistItemFromState>} [currentPlaylistForDisplay] // إذا كان يتم إدارة القائمة مباشرة في الحالة
    */
 
@@ -72,7 +64,6 @@ const stateStore = (() => {
   /**
    * @typedef {Object} ProjectState // هذه هي بنية `currentProject`
    * @property {string | null} id
-   * @property {'quranic' | 'regular'} projectType;
    * @property {string} title
    * @property {number | null} createdAt
    * @property {number | null} updatedAt
@@ -81,7 +72,7 @@ const stateStore = (() => {
    * @property {TextStyleState} textStyle
    * @property {VideoCompositionState} videoComposition
    * @property {ExportSettingsState} exportSettings
-   * @property {import('../features/project-manager/project.model.js').BackgroundAudioState} backgroundAudio // Updated to use the new model definition
+   * @property {BackgroundAudioPlayerState} [backgroundAudio] // حالة الصوت الخلفي داخل المشروع
    * @property {boolean} [isDirty] - علم اختياري لتغييرات غير محفوظة
    */
 
@@ -111,23 +102,10 @@ const stateStore = (() => {
    */
 
   /**
-   * @typedef {import('../features/text-engine/text.rendering.logic.js').WordSegmentedTextOutput} HighlightedTextState
-   */
-
-  /**
-   * @typedef {Object} AyahTextContent
-   * @property {string} editionId - The ID of the translation/tafsir edition.
-   * @property {Array<{globalAyahNumber: number, text: string, numberInSurah: number, surahNumber: number}>} ayahs - Array containing the text for one or more ayahs.
-   * // Add other relevant fields from QuranAyah if needed, e.g., edition details, direction.
-   */
-
-  /**
    * @typedef {Object} AppState // الحالة الكاملة للتطبيق
    * @property {string} currentTheme - السمة النشطة (ليست بالضرورة المفضلة، ولكن ما يتم عرضه)
    * @property {ProjectState | null} currentProject
    * @property {Array<ProjectState>} savedProjects
-   * @property {HighlightedTextState | null} currentHighlightedText - حالة النص المظلل حاليًا للعرض
-   * @property {Record<string, AyahTextContent>} currentTranslationTexts - Stores loaded translation texts, keyed by editionId.
    * @property {string} activeScreen - 'initial' | 'editor'
    * @property {string | null} activePanelId - معرف اللوحة المفتوحة حاليًا في المحرر
    * @property {boolean} isLoading - مؤشر تحميل عالمي للعمليات الشاملة
@@ -176,8 +154,6 @@ const stateStore = (() => {
       defaultReciterId: 'ar.alafasy'
     },
     globalError: null,
-    currentHighlightedText: null, // Added for word highlighting
-    currentTranslationTexts: {}, // Added for storing translation texts
   };
   
   // قائمة المستمعين لتغييرات الحالة
@@ -566,8 +542,7 @@ const stateStore = (() => {
           const _defaultProjectCreator = (typeof window !== 'undefined' && window.createNewProjectObject) ||
                                     (typeof createNewProjectObject !== 'undefined' ? createNewProjectObject : (overrides) => ({
                                       ..._DEFAULT_PROJECT_SCHEMA, 
-                                      id: _generateId(),
-                                      projectType: 'quranic', // Default project type
+                                      id: _generateId(), 
                                       title: 'مشروع جديد', 
                                       createdAt: Date.now(), 
                                       updatedAt: Date.now(), 
@@ -575,8 +550,7 @@ const stateStore = (() => {
                                     }));
           
           const newProjectInstance = _defaultProjectCreator({
-            title: state.appSettings?.newProjectDefaultTitle || 'مشروع جديد',
-            projectType: 'quranic' // Explicitly set default for new projects via this action
+            title: state.appSettings?.newProjectDefaultTitle || 'مشروع جديد'
           });
           
           // تعيين المشروع الجديد
@@ -707,24 +681,6 @@ const stateStore = (() => {
           _updateUndoRedoAvailability();
           stateChangedOverall = true;
           options.skipHistory = true;
-          break;
-
-        // تحديث حالة النص المظلل
-        case _ACTIONS.SET_HIGHLIGHTED_TEXT_STATE: // Ensure this action type is defined in app.constants.js
-          // No deep comparison needed here; this state changes frequently during playback.
-          // Also, skip history for this action as it's purely for rendering.
-          state = { ...state, currentHighlightedText: payload };
-          stateChangedOverall = true; 
-          options.skipHistory = true; // Typically, highlighting changes shouldn't be in undo/redo history
-          break;
-
-        // تحديث نصوص الترجمة المحملة
-        case _ACTIONS.SET_TRANSLATION_TEXTS: // Ensure this action type is defined in app.constants.js
-          // This replaces the entire map of translation texts.
-          // Consider if merging is needed, but for now, direct replacement is simpler.
-          state = { ...state, currentTranslationTexts: payload || {} };
-          stateChangedOverall = true;
-          options.skipHistory = true; // This is derived data, not part of project history
           break;
           
         // حالة غير معروفة
