@@ -101,6 +101,9 @@ const mainRenderer = (() => {
     blur: 10,
     offset: { x: 0, y: 0 }
   };
+  const TRANSLATION_FONT_SIZE_RATIO = 0.6; // e.g., 60% of main text font size
+  const TRANSLATION_LINE_SPACING = 5; // Extra pixels between translation lines
+  const TRANSLATION_BLOCK_SPACING = 20; // Pixels between main text and first translation, and between translations
   
   // المتغيرات المحلية
   let canvas = null;
@@ -351,7 +354,7 @@ const mainRenderer = (() => {
    * @param {RenderTextOptions} textOptions - خيارات النص
    * @private
    */
-  function _drawText(textOptions) {
+  function _drawText(textOptions, highlightedTextState = null) {
     const logger = getLogger();
     
     if (!canvas || !ctx) {
@@ -361,18 +364,32 @@ const mainRenderer = (() => {
       });
       return;
     }
-    
-    if (!textOptions || !isValidText(textOptions.text)) {
+
+    // Determine if we are drawing highlighted text or standard text
+    if (highlightedTextState && highlightedTextState.segments && highlightedTextState.segments.length > 0) {
+      _drawHighlightedText(textOptions, highlightedTextState);
+    } else if (textOptions && isValidText(textOptions.text)) {
+      _drawStandardText(textOptions);
+    } else {
       logger.logWarning({
-        message: translate('MainRenderer.InvalidText'),
+        message: translate('MainRenderer.InvalidTextOrHighlighState'),
         origin: 'MainRenderer._drawText'
       });
-      return;
     }
-    
+  }
+
+  /**
+   * Draws standard (non-highlighted) text.
+   * @param {RenderTextOptions} textOptions - خيارات النص
+   * @private
+   */
+  function _drawStandardText(textOptions) {
+    const logger = getLogger();
+     if (!canvas || !ctx) return; // Should be ensured by caller
+
     // الحصول على خيارات النص
     const {
-      text = '',
+      text = '', // This will be the full text
       x = canvas.width / 2,
       y = canvas.height / 2,
       fontSize = 48,
@@ -444,7 +461,7 @@ const mainRenderer = (() => {
     
     // رسم كل سطر
     lines.forEach(line => {
-      ctx.fillText(line, x, currentY);
+      ctx.fillText(line, x, currentY); // x is already adjusted for textAlign
       currentY += lineHeight;
     });
     
@@ -453,12 +470,175 @@ const mainRenderer = (() => {
     
     // إرسال الحدث
     notifyFrameRendered({
-      type: 'text',
+      type: 'standard_text',
       text,
       fontSize,
       fontFamily,
       fontColor,
       position: { x, y }
+    });
+  }
+
+
+  /**
+   * Draws text with word-level highlighting.
+   * @param {RenderTextOptions} baseTextOptions - Base styling options for the text.
+   * @param {import('../../core/state-store.js').HighlightedTextState} highlightedTextState - Highlighting data.
+   * @private
+   */
+  function _drawHighlightedText(baseTextOptions, highlightedTextState) {
+    const logger = getLogger();
+    if (!canvas || !ctx) return;
+
+    const {
+      x = canvas.width / 2,
+      y = canvas.height / 2,
+      fontSize = 48,
+      fontFamily = 'Amiri',
+      fontColor = '#ffffff', // Default/played text color
+      textAlign = DEFAULT_TEXT_ALIGN,
+      textDirection = DEFAULT_TEXT_DIRECTION, // 'rtl' or 'ltr'
+      // textEffect, opacity, rotation, shadow settings from baseTextOptions can be applied to the whole block if needed
+      // For now, focusing on word-specific styles.
+    } = baseTextOptions;
+
+    const { segments, originalText } = highlightedTextState;
+
+    // Define colors for different states
+    const activeColor = '#FFD700'; // Bright yellow for active word
+    const upcomingColor = fontColor; // Same as default for upcoming words
+    const playedColor = '#A9A9A9'; // Darker grey for played words
+
+    ctx.save();
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    ctx.direction = textDirection;
+    ctx.textAlign = textAlign; // This sets the anchor point for the whole line of text
+
+    // Simple single-line layout for now. Multi-line requires more complex logic.
+    // Calculate total width of the text to be rendered for centering or alignment.
+    let totalWidth = 0;
+    segments.forEach(segment => {
+      totalWidth += ctx.measureText(segment.text + (textDirection === 'rtl' ? " " : " ")).width; // Add space width
+    });
+    
+    let currentX;
+    // Adjust starting X based on textAlign for the entire line
+    if (textAlign === 'center') {
+      currentX = x - (totalWidth / 2);
+    } else if (textAlign === 'right' || (textDirection === 'rtl' && textAlign === 'end') || (textDirection === 'ltr' && textAlign === 'start')) {
+      currentX = x - totalWidth; // This might need adjustment based on how x is interpreted
+    } else { // left, or (rtl && start), or (ltr && end)
+      currentX = x;
+    }
+    
+    if (textDirection === 'rtl') {
+        // For RTL, we draw from right to left. The 'currentX' will be the rightmost point.
+        // The textAlign = 'center' will make 'x' the center, so currentX is x - totalWidth / 2.
+        // If textAlign = 'right' or 'end', x is the right edge. totalWidth must be positive.
+        // We iterate segments in logical order (first word to last word).
+        // When drawing, fillText respects ctx.textAlign relative to the x-coordinate it's given.
+        // A common approach for RTL manual layout:
+        // 1. Calculate total width.
+        // 2. Determine starting X (rightmost or leftmost point depending on overall line alignment).
+        // 3. Iterate words. For RTL, draw word, then advance X to the left.
+        
+        // Simplified RTL for single line:
+        // Iterate segments in reverse for drawing order if laying out manually from a single anchor.
+        // However, with ctx.direction = 'rtl' and ctx.textAlign, the browser might handle it.
+        // Let's try drawing segments in logical order and see how ctx.direction handles it.
+        // The `currentX` needs to be the starting point (right for RTL if textAlign is 'start' or 'left').
+        // If textAlign is 'center', x is the center.
+        // If textAlign is 'right' or 'end', x is the right edge.
+        
+        // For RTL, if textAlign is 'start', it means align to the right.
+        // If textAlign is 'end', it means align to the left.
+        
+        // Let's adjust currentX for RTL based on standard canvas behavior
+        if (textAlign === 'start') { // Default for RTL if not specified, effectively 'right'
+             currentX = x; // x is the right starting point
+             ctx.textAlign = 'right'; // Ensure this for precision
+        } else if (textAlign === 'end') { // Align to left
+            currentX = x; // x is the left starting point
+            ctx.textAlign = 'left';
+        } else { // center
+            currentX = x; // x is the center point, fillText will handle it
+            ctx.textAlign = 'center'; // Explicitly set
+        }
+
+
+        // For RTL, we need to draw from right to left.
+        // If ctx.textAlign is 'right', currentX is the rightmost point of the first word.
+        // If ctx.textAlign is 'left', currentX is the leftmost point of the last word (after measuring all).
+        // If ctx.textAlign is 'center', currentX is the center of the entire text block.
+
+        // Simpler RTL: draw word by word, from right to left.
+        // This requires pre-calculating positions or drawing in reverse if using a single textBaseline.
+        // For now, let's iterate logically and rely on canvas direction and textAlign.
+        // This might mean words appear in reverse order if not handled carefully.
+
+        // Correct approach for RTL with individual word drawing:
+        // Calculate positions from right to left.
+        let rtlX = x; // Assume x is the rightmost boundary for 'start'/'right' textAlign
+        if (textAlign === 'center') {
+            rtlX = x + totalWidth / 2;
+        } else if (textAlign === 'left' || textAlign === 'end') {
+            rtlX = x + totalWidth;
+        }
+        
+        for (const segment of segments) {
+            const word = segment.text;
+            const wordWidth = ctx.measureText(word).width;
+            // Space is handled by measureText if included, or add manually
+            const spaceWidth = ctx.measureText(" ").width;
+
+
+            if (segment.isActive) {
+                ctx.fillStyle = activeColor;
+            } else if (segment.isPlayed) {
+                ctx.fillStyle = playedColor;
+            } else {
+                ctx.fillStyle = upcomingColor;
+            }
+            
+            // When drawing RTL, current word is to the left of the previous one.
+            // So, if rtlX is the right boundary of the current word:
+            ctx.fillText(word, rtlX - wordWidth, y); // Draw current word
+            rtlX -= (wordWidth + spaceWidth); // Move to the left for the next word
+        }
+
+    } else { // LTR
+        if (textAlign === 'right' || textAlign === 'end') {
+            currentX = x - totalWidth;
+        } else if (textAlign === 'center') {
+            currentX = x - totalWidth / 2;
+        } else { // left or start
+            currentX = x;
+        }
+        ctx.textAlign = 'left'; // For LTR, easier to manage by drawing from left to right.
+
+        for (const segment of segments) {
+            const word = segment.text;
+            const wordSpace = word + " "; // Add space for measurement and drawing
+
+            if (segment.isActive) {
+                ctx.fillStyle = activeColor;
+            } else if (segment.isPlayed) {
+                ctx.fillStyle = playedColor;
+            } else {
+                ctx.fillStyle = upcomingColor;
+            }
+            ctx.fillText(wordSpace, currentX, y);
+            currentX += ctx.measureText(wordSpace).width;
+        }
+    }
+
+
+    ctx.restore();
+
+    notifyFrameRendered({
+      type: 'highlighted_text',
+      originalText,
+      segmentsRendered: segments.length
     });
   }
 
@@ -547,16 +727,18 @@ const mainRenderer = (() => {
     }
     
     // التحقق مما إذا كانت الحالة قد تغيرت
-    const hasStateChanged = !lastRenderedState ||
-                           JSON.stringify(project) !== JSON.stringify(lastRenderedState.currentProject) ||
-                           state.isLoading !== lastRenderedState.isLoading;
-    
-    if (!hasStateChanged) {
-      return; // لا حاجة لرسم جديد
+    const projectStateChanged = !lastRenderedState ||
+                                JSON.stringify(project) !== JSON.stringify(lastRenderedState.currentProject);
+    const highlightedTextChanged = state.currentHighlightedText !== lastRenderedState.currentHighlightedText; // Shallow compare is enough
+    const loadingChanged = state.isLoading !== lastRenderedState.isLoading;
+
+    if (!projectStateChanged && !highlightedTextChanged && !loadingChanged) {
+      // requestAnimationFrame(_renderFrame); // Keep the loop going even if nothing changed for future dynamic effects
+      return; 
     }
     
     // تحديث الحالة
-    lastRenderedState = { ...state };
+    lastRenderedState = { ...state }; // Store the new state for next frame comparison
     
     // مسح الكانفاس
     _clearCanvas();
@@ -564,31 +746,147 @@ const mainRenderer = (() => {
     // رسم الخلفية
     _drawBackground(project.background);
     
-    // رسم النصوص
-    if (project.textStyle && project.textStyle.text) {
-      _drawText({
-        text: project.textStyle.text,
-        x: canvas.width / 2,
-        y: canvas.height / 2,
-        fontSize: project.textStyle.fontSize || DEFAULT_PROJECT_SCHEMA.textStyle.fontSize,
-        fontFamily: project.textStyle.fontFamily || DEFAULT_PROJECT_SCHEMA.textStyle.fontFamily,
-        fontColor: project.textStyle.fontColor || DEFAULT_PROJECT_SCHEMA.textStyle.fontColor,
-        textAlign: project.textStyle.textAlign || DEFAULT_TEXT_ALIGN,
-        textDirection: project.textStyle.textDirection || DEFAULT_TEXT_DIRECTION,
-        textEffect: project.textStyle.textEffect || DEFAULT_TEXT_EFFECT,
-        opacity: project.textStyle.opacity ?? DEFAULT_OPACITY,
-        rotation: project.textStyle.rotation ?? 0,
-        shadowColor: project.textStyle.shadow?.color ?? DEFAULT_SHADOW.color,
-        shadowBlur: project.textStyle.shadow?.blur ?? DEFAULT_SHADOW.blur,
-        shadowOffsetX: project.textStyle.shadow?.offsetX ?? DEFAULT_SHADOW.offset.x,
-        shadowOffsetY: project.textStyle.shadow?.offsetY ?? DEFAULT_SHADOW.offset.y,
-        scale: project.textStyle.scale ?? 1
-      });
+    // رسم النصوص (highlighted or standard)
+    const textStyleFromProject = project.textStyle || {};
+    let currentYPosition = canvas.height / 2; // Initial Y, will be adjusted
+
+    // Estimate space needed for translations to adjust main text Y position
+    // This is a rough estimate; more accurate calculation would involve pre-rendering or complex metrics.
+    const { currentTranslationTexts, currentProject } = state;
+    const selectedTranslationIds = currentProject?.quranSelection?.selectedTranslationIds || [];
+    let estimatedTranslationHeight = 0;
+    if (currentTranslationTexts && selectedTranslationIds.length > 0) {
+        const translationFontSize = (textStyleFromProject.fontSize || DEFAULT_PROJECT_SCHEMA.textStyle.fontSize) * TRANSLATION_FONT_SIZE_RATIO;
+        selectedTranslationIds.forEach(id => {
+            const translationContent = currentTranslationTexts[id];
+            if (translationContent && translationContent.ayahs && translationContent.ayahs.length > 0) {
+                // Rough estimate: 2 lines per translation + spacing
+                estimatedTranslationHeight += (translationFontSize * 1.2 * 2) + TRANSLATION_BLOCK_SPACING; 
+            }
+        });
+    }
+    // Adjust Y for main text to be higher if there are translations
+    currentYPosition = (canvas.height / 2) - (estimatedTranslationHeight / 2);
+
+
+    const baseTextRenderOptions = {
+        text: textStyleFromProject.text || '', // Fallback to empty string if no text
+        x: canvas.width / 2, 
+        y: currentYPosition, // Use adjusted Y
+        fontSize: textStyleFromProject.fontSize || DEFAULT_PROJECT_SCHEMA.textStyle.fontSize,
+        fontFamily: textStyleFromProject.fontFamily || DEFAULT_PROJECT_SCHEMA.textStyle.fontFamily,
+        fontColor: textStyleFromProject.fontColor || DEFAULT_PROJECT_SCHEMA.textStyle.fontColor,
+        textAlign: textStyleFromProject.textAlign || DEFAULT_TEXT_ALIGN,
+        textDirection: textStyleFromProject.textDirection || DEFAULT_TEXT_DIRECTION, // Crucial for highlighting layout
+        // ... include other properties from textStyleFromProject like shadow, opacity, etc.
+        opacity: textStyleFromProject.opacity ?? DEFAULT_OPACITY,
+        rotation: textStyleFromProject.rotation ?? 0,
+        shadowColor: textStyleFromProject.shadow?.color ?? DEFAULT_SHADOW.color,
+        shadowBlur: textStyleFromProject.shadow?.blur ?? DEFAULT_SHADOW.blur,
+        shadowOffsetX: textStyleFromProject.shadow?.offsetX ?? DEFAULT_SHADOW.offset.x,
+        shadowOffsetY: textStyleFromProject.shadow?.offsetY ?? DEFAULT_SHADOW.offset.y,
+        scale: textStyleFromProject.scale ?? 1
+    };
+
+    if (state.currentHighlightedText && state.currentHighlightedText.segments.length > 0) {
+        // If highlighted text is available, its originalText might be more accurate than project.textStyle.text
+        // baseTextRenderOptions.text = state.currentHighlightedText.originalText; // Optionally override
+        _drawText(baseTextRenderOptions, state.currentHighlightedText);
+    } else if (isValidText(baseTextRenderOptions.text)) {
+        _drawText(baseTextRenderOptions, null); // Draw standard text
     }
     
+    // Update currentYPosition after drawing main text (assuming _drawText or its sub-functions update it or we can estimate)
+    // For simplicity, let's assume the main text (Arabic) takes up roughly its font size * number of lines (e.g., 2 lines)
+    // This is a placeholder for actual height calculation of the drawn text.
+    const mainTextEstimatedHeight = (baseTextRenderOptions.fontSize * 1.2 * 2); // Estimate 2 lines
+    currentYPosition += mainTextEstimatedHeight / 2 + TRANSLATION_BLOCK_SPACING;
+
+
+    // Render Translation Texts
+    if (currentTranslationTexts && selectedTranslationIds.length > 0) {
+      selectedTranslationIds.forEach(editionId => {
+        const translationContent = currentTranslationTexts[editionId];
+        if (translationContent && translationContent.ayahs && translationContent.ayahs.length > 0) {
+          // Assuming only one ayah text per AyahTextContent for now
+          const textToRender = translationContent.ayahs[0].text;
+          
+          // Determine text direction (simple heuristic, ideally from edition metadata)
+          const lang = editionId.substring(0, 2); // e.g., 'en' from 'en.sahih'
+          const direction = (lang === 'ar' || lang === 'fa' || lang === 'ur') ? 'rtl' : 'ltr';
+
+          currentYPosition = _drawSingleTranslationBlock(
+            textToRender,
+            {
+              ...baseTextRenderOptions, // Inherit some base styles
+              fontColor: '#DDDDDD', // Lighter color for translations
+              fontSize: baseTextRenderOptions.fontSize * TRANSLATION_FONT_SIZE_RATIO,
+              fontFamily: 'Arial, sans-serif', // Standard font for translations
+              textAlign: direction === 'rtl' ? 'right' : 'left', // Align based on direction
+              textDirection: direction,
+            },
+            currentYPosition, // Start below previous text block
+            canvas.width * 0.9 // Max width for translation text
+          );
+          currentYPosition += TRANSLATION_BLOCK_SPACING; // Add spacing for the next block
+        }
+      });
+    }
+
     // تحديث الحالة
     requestAnimationFrame(_renderFrame);
   }
+
+  /**
+   * Draws a single block of translation text with basic wrapping.
+   * @param {string} text - The translation text to render.
+   * @param {RenderTextOptions} options - Styling options.
+   * @param {number} startY - The Y position to start drawing this text block.
+   * @param {number} maxWidth - Maximum width for text lines.
+   * @returns {number} The Y position after this text block.
+   * @private
+   */
+  function _drawSingleTranslationBlock(text, options, startY, maxWidth) {
+    if (!canvas || !ctx || !isValidText(text)) return startY;
+
+    ctx.save();
+    ctx.font = `${options.fontSize}px ${options.fontFamily}`;
+    ctx.fillStyle = options.fontColor;
+    ctx.textAlign = options.textAlign;
+    ctx.direction = options.textDirection;
+
+    const words = text.split(/\s+/);
+    let line = '';
+    let currentY = startY;
+    const lineHeight = options.fontSize * 1.2 + TRANSLATION_LINE_SPACING;
+    
+    // Determine actual X based on textAlign and maxWidth
+    let xPosition = options.x; // Default for center
+    if (options.textAlign === 'left' || (options.textDirection === 'ltr' && options.textAlign === 'start') || (options.textDirection === 'rtl' && options.textAlign === 'end')) {
+        xPosition = (canvas.width - maxWidth) / 2;
+    } else if (options.textAlign === 'right' || (options.textDirection === 'rtl' && options.textAlign === 'start') || (options.textDirection === 'ltr' && options.textAlign === 'end')) {
+        xPosition = (canvas.width + maxWidth) / 2;
+    }
+
+
+    for (let n = 0; n < words.length; n++) {
+      const testLine = line + words[n] + ' ';
+      const metrics = ctx.measureText(testLine);
+      const testWidth = metrics.width;
+      if (testWidth > maxWidth && n > 0) {
+        ctx.fillText(line, xPosition, currentY);
+        line = words[n] + ' ';
+        currentY += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+    ctx.fillText(line, xPosition, currentY); // Draw the last line
+    
+    ctx.restore();
+    return currentY + lineHeight; // Return Y for the next block
+  }
+
 
   /**
    * التعامل مع تغييرات المشروع

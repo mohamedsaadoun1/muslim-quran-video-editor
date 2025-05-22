@@ -1,0 +1,243 @@
+/* Basic CSS Resets */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* CSS Variables */
+:root {
+  /* Primary Color Palette */
+  --primary-color: #007bff; /* Example Blue */
+  --secondary-color: #6c757d; /* Example Grey */
+  --accent-color: #ffc107; /* Example Yellow */
+  --light-grey: #f8f9fa;
+  --dark-grey: #343a40;
+  --text-color: #212529;
+  --background-color: #ffffff;
+
+  /* Fonts */
+  --primary-font: 'Inter', sans-serif;
+  --secondary-font: 'Amiri', serif; /* Placeholder for Arabic Font */
+}
+
+/* Basic Body Styles */
+body {
+  font-family: var(--primary-font);
+  color: var(--text-color);
+  background-color: var(--background-color);
+  line-height: 1.6;
+}
+
+/* Basic Component Styling */
+/* Buttons */
+.btn {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  border: 1px solid transparent;
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, color 0.15s ease-in-out;
+}
+
+.btn-primary {
+  color: #fff;
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.btn-primary:hover {
+  background-color: #0056b3; /* Darker shade of primary for hover */
+  border-color: #0056b3;
+}
+
+.btn-primary:active {
+  background-color: #004085; /* Even darker for active */
+  border-color: #004085;
+}
+
+.btn.active {
+  background-color: var(--accent-color);
+  color: var(--dark-grey);
+  border-color: var(--accent-color);
+}
+
+.btn-primary.active {
+  background-color: var(--primary-color); /* Keep primary active distinct if needed */
+  /* Or make it same as general active if that's preferred */
+  /* background-color: var(--accent-color); */
+  /* color: var(--dark-grey); */
+  /* border-color: var(--accent-color); */
+}
+
+
+/* Panels/Cards */
+.panel,
+.card {
+  background-color: var(--background-color);
+  border: 1px solid var(--light-grey);
+  border-radius: 0.25rem;
+  padding: 1rem;
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+/* Translation Selector UI (Conceptual) */
+#translation-selector-container {
+  padding: 1rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 0.25rem;
+  margin-top: 1rem;
+}
+
+#translation-selector-container h3 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  font-size: 1.2rem;
+  color: var(--text-color);
+}
+
+#translation-list {
+  list-style-type: none;
+  padding-left: 0;
+  max-height: 200px; /* Example max height */
+  overflow-y: auto; /* Scroll if many translations */
+  border: 1px solid var(--light-grey); /* Optional border for the list itself */
+  border-radius: 0.25rem;
+  padding: 0.5rem;
+}
+
+#translation-list li {
+  padding: 0.35rem 0.25rem;
+  border-bottom: 1px solid var(--light-grey);
+}
+
+#translation-list li:last-child {
+  border-bottom: none;
+}
+
+#translation-list label {
+  display: block; /* Make the whole label area clickable */
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+#translation-list input[type="checkbox"] {
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+/* Reciter Selector UI (Conceptual) */
+#reciter-selector-container {
+  padding: 0.5rem 0; /* More subtle padding if it's part of a larger panel */
+  margin-top: 0.5rem;
+}
+
+#reciter-selector-container label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--secondary-color); /* Using secondary color for label */
+}
+
+#reciter-select {
+  width: 100%; /* Full width of its container */
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--text-color);
+  background-color: var(--background-color);
+  background-clip: padding-box;
+  border: 1px solid var(--light-grey);
+  border-radius: 0.25rem;
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+#reciter-select:focus {
+  border-color: var(--primary-color);
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25); /* Focus shadow like Bootstrap */
+}
+
+/* Background Audio UI (Conceptual) */
+#background-audio-controls-container {
+  padding: 1rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 0.25rem;
+  margin-top: 1rem;
+  background-color: var(--light-grey); /* Slightly different background for distinction */
+}
+
+#background-audio-controls-container h4 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem; /* Slightly smaller than panel titles */
+  color: var(--text-color);
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.5rem;
+}
+
+#background-audio-controls-container .file-info {
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--secondary-color);
+}
+
+#background-audio-controls-container .file-name-display {
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+#background-audio-controls-container .duration-display {
+  margin-left: 0.5rem;
+}
+
+#background-audio-controls-container .file-input {
+  display: block;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+#background-audio-controls-container .controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem; /* Space between control groups */
+  flex-wrap: wrap; /* Wrap controls on smaller screens */
+}
+
+#background-audio-controls-container .control-button {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.9rem;
+  border-radius: 0.2rem;
+  background-color: var(--primary-color);
+  color: white;
+  border: 1px solid var(--primary-color);
+}
+#background-audio-controls-container .control-button:disabled {
+  background-color: var(--secondary-color);
+  border-color: var(--secondary-color);
+  cursor: not-allowed;
+}
+
+
+#background-audio-controls-container .volume-control,
+#background-audio-controls-container .loop-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+#background-audio-controls-container .volume-slider {
+  flex-grow: 1; /* Allow slider to take available space */
+  max-width: 150px; /* Max width for volume slider */
+}
+#background-audio-controls-container .volume-slider:disabled,
+#background-audio-controls-container .loop-checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}

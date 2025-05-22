@@ -15,64 +15,10 @@ const ayahAudioRetriever = (() => {
     // resourceManager will be used directly from its import for now
   };
 
-  // Cache for fetched audio durations to avoid re-processing
+  // Cache for fetched audio details (URL, duration, word timings)
   // Key: `${ayahGlobalNumber}-${audioEditionIdentifier}`
-  // Value: { url: string, duration: number }
+  // Value: { url: string, duration: number (seconds), words: Array<{text: string, startTime: number, endTime: number}> (ms) }
   const audioInfoCache = new Map();
-
-
-  /**
-   * Fetches the audio URL for a given Ayah and audio edition.
-   * This typically comes directly from the quranApiClient.
-   * @private
-   * @param {number} ayahGlobalNumber - The global number of the Ayah in the Quran (1 to 6236).
-   * @param {string} audioEditionIdentifier - e.g., 'ar.alafasy'.
-   * @returns {Promise<string | null>} The direct audio URL or null.
-   */
-  async function _fetchAyahAudioURL(ayahGlobalNumber, audioEditionIdentifier) {
-    if (!ayahGlobalNumber || !audioEditionIdentifier) {
-      (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-        message: 'Ayah number and audio edition are required to fetch audio URL.',
-        origin: 'AyahAudioRetriever._fetchAyahAudioURL',
-        context: { ayahGlobalNumber, audioEditionIdentifier }
-      });
-      return null;
-    }
-
-    try {
-      // The `getAyahAudioData` function is expected to return an object (or array of one object)
-      // where each object represents an Ayah and contains an 'audio' property with the URL.
-      const ayahData = await quranApiClient.getAyahAudioData(
-        ayahGlobalNumber, // Use global Ayah number for the API endpoint
-        audioEditionIdentifier,
-        dependencies.errorLogger
-      );
-
-      // Response might be an array if multiple ayahs were requested, or a single object.
-      // Assuming single ayah request for now, or taking the first if array.
-      const targetAyah = Array.isArray(ayahData) ? ayahData[0] : ayahData;
-
-      if (targetAyah && targetAyah.audio && typeof targetAyah.audio === 'string') {
-        return targetAyah.audio; // This is the direct MP3/audio link
-      } else {
-        (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-          message: `No direct audio URL found in API response for Ayah ${ayahGlobalNumber}, edition ${audioEditionIdentifier}.`,
-          origin: 'AyahAudioRetriever._fetchAyahAudioURL',
-          context: { ayahGlobalNumber, audioEditionIdentifier, responseData: targetAyah }
-        });
-        return null;
-      }
-    } catch (error) {
-      // error already logged by quranApiClient typically
-      (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-          error,
-          message: `Failed to fetch audio URL for Ayah ${ayahGlobalNumber}, edition ${audioEditionIdentifier}.`,
-          origin: 'AyahAudioRetriever._fetchAyahAudioURL'
-      });
-      return null;
-    }
-  }
-
 
   /**
    * Gets the duration of an audio file by loading its metadata into an <audio> element.
@@ -130,14 +76,14 @@ const ayahAudioRetriever = (() => {
 
 
   /**
-   * Retrieves and prepares audio information (URL and duration) for a specific Ayah.
+   * Retrieves and prepares audio information (URL, duration, and word timings) for a specific Ayah.
    * Uses caching to avoid re-fetching or re-processing.
-   * Publishes an event (AYAH_AUDIO_READY) when data is available.
+   * Publishes an event (EVENTS.AYAH_AUDIO_READY) when data is available.
    * @param {number} ayahGlobalNumber - The global number of the Ayah (1-6236).
    * @param {string} audioEditionIdentifier - The identifier of the audio edition (e.g., 'ar.alafasy').
    * @param {boolean} [forceRefetch=false] - If true, bypasses cache and refetches data.
-   * @returns {Promise<{url: string, duration: number, ayahGlobalNumber: number} | null>}
-   *          Audio info or null if an error occurs.
+   * @returns {Promise<{url: string, duration: number, words: Array<{text: string, startTime: number, endTime: number}>, ayahGlobalNumber: number} | null>}
+   *          Audio details or null if an error occurs.
    */
   async function getAyahAudioInfo(ayahGlobalNumber, audioEditionIdentifier, forceRefetch = false) {
     if (!ayahGlobalNumber || !audioEditionIdentifier) {
@@ -160,51 +106,89 @@ const ayahAudioRetriever = (() => {
     // dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING, true); // Optionally show global spinner
 
     try {
-      const audioUrl = await _fetchAyahAudioURL(ayahGlobalNumber, audioEditionIdentifier);
-      if (!audioUrl) {
-        // _fetchAyahAudioURL would have logged the specific error.
-        throw new Error(`Audio URL could not be retrieved for Ayah ${ayahGlobalNumber}.`);
+      const ayahDataWithTimings = await quranApiClient.getAyahWordTimings(
+        ayahGlobalNumber,
+        audioEditionIdentifier,
+        dependencies.errorLogger
+      );
+
+      if (!ayahDataWithTimings || !ayahDataWithTimings.audio) {
+        (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+          message: `Audio data or URL not found in API response for Ayah ${ayahGlobalNumber}, edition ${audioEditionIdentifier}.`,
+          origin: 'AyahAudioRetriever.getAyahAudioInfo',
+          context: { ayahGlobalNumber, audioEditionIdentifier, responseData: ayahDataWithTimings }
+        });
+        throw new Error(`Audio data or URL not found for Ayah ${ayahGlobalNumber}.`);
+      }
+      
+      const audioUrl = ayahDataWithTimings.audio; // API response includes audio URL
+
+      // Process segments into WordTiming structure
+      let wordTimings = [];
+      if (ayahDataWithTimings.segments && Array.isArray(ayahDataWithTimings.segments)) {
+        wordTimings = ayahDataWithTimings.segments.map(segment => ({
+          text: segment[0],       // word_text
+          startTime: segment[1],  // start_time_ms
+          endTime: segment[2]     // end_time_ms
+        }));
+      } else {
+         (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+          message: `No segments (word timings) found in API response for Ayah ${ayahGlobalNumber}, edition ${audioEditionIdentifier}. Word-level sync will not be available.`,
+          origin: 'AyahAudioRetriever.getAyahAudioInfo',
+          context: { ayahGlobalNumber, audioEditionIdentifier, responseData: ayahDataWithTimings }
+        });
       }
 
-      // Now, get the duration.
-      const duration = await _getAudioDuration(audioUrl);
+      // Get total duration. API might provide it, or we might need to calculate it or use _getAudioDuration.
+      // For now, assume API doesn't provide total duration directly in this response, or it's unreliable.
+      // So, we'll fetch it using _getAudioDuration.
+      // In a future optimization, if `ayahDataWithTimings.duration` exists and is reliable, use it.
+      let duration = await _getAudioDuration(audioUrl); // duration in seconds
+
       if (duration === null || isNaN(duration) || duration <= 0) {
-        // _getAudioDuration would have logged the specific error.
-        (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
-            message: `Failed to determine valid audio duration for Ayah ${ayahGlobalNumber}, URL: ${audioUrl}. Using placeholder or skipping.`,
+         (dependencies.errorLogger.logWarning || console.warn).call(dependencies.errorLogger, {
+            message: `Failed to determine valid audio duration for Ayah ${ayahGlobalNumber}, URL: ${audioUrl}. Using placeholder.`,
             origin: "AyahAudioRetriever.getAyahAudioInfo",
             context: { ayahGlobalNumber, audioUrl, obtainedDuration: duration }
         });
-        // Fallback: Maybe try to play it and get duration at runtime, or use a default placeholder duration
-        // For now, if duration is not determined, we might fail this Ayah's audio.
-        // Or you can decide to proceed with a default duration (e.g. 5 seconds) but that's risky for sync.
-        // throw new Error(`Audio duration could not be determined for Ayah ${ayahGlobalNumber}.`);
-        // For now, let's publish with a potentially problematic duration to see, but real app would handle better.
-        const infoWithProblematicDuration = { url: audioUrl, duration: duration || 5, ayahGlobalNumber }; // 5s default if null
-        audioInfoCache.set(cacheKey, { url: audioUrl, duration: duration || 5 });
-        dependencies.eventAggregator.publish(EVENTS.AYAH_AUDIO_READY, infoWithProblematicDuration);
-        return infoWithProblematicDuration;
+        duration = wordTimings.length > 0 ? (wordTimings[wordTimings.length -1].endTime / 1000) + 0.5 : 5; // Fallback: last word end time + buffer, or 5s
       }
 
-      const audioInfo = { url: audioUrl, duration, ayahGlobalNumber };
-      audioInfoCache.set(cacheKey, { url: audioUrl, duration }); // Cache without ayahGlobalNumber
+      const ayahAudioDetails = {
+        url: audioUrl,
+        duration: duration, // seconds
+        words: wordTimings, // ms
+        ayahGlobalNumber: ayahGlobalNumber
+      };
+      
+      // Cache the processed details (excluding ayahGlobalNumber for generic cache value)
+      audioInfoCache.set(cacheKey, {
+        url: audioUrl,
+        duration: duration,
+        words: wordTimings
+      });
 
-      dependencies.eventAggregator.publish(EVENTS.AYAH_AUDIO_READY, audioInfo);
-      // console.debug(`[AyahAudioRetriever] Audio info ready for Ayah ${ayahGlobalNumber}`, audioInfo);
-      return audioInfo;
+      dependencies.eventAggregator.publish(EVENTS.AYAH_AUDIO_READY, ayahAudioDetails);
+      // console.debug(`[AyahAudioRetriever] Audio details ready for Ayah ${ayahGlobalNumber}`, ayahAudioDetails);
+      return ayahAudioDetails;
 
     } catch (error) {
-      // No need to re-log if it's already from _fetchAyahAudioURL or _getAudioDuration unless adding more context.
+      // Error logging is handled by quranApiClient or within this try-catch for specific issues.
       (dependencies.errorLogger.handleError || console.error).call(dependencies.errorLogger, {
-        error,
-        message: `Failed to get full audio info for Ayah ${ayahGlobalNumber}, edition ${audioEditionIdentifier}. Error: ${error.message}`,
-        origin: 'AyahAudioRetriever.getAyahAudioInfo',
+        error, // This might be the original error from quranApiClient or a new one thrown here
+        message: `Failed to get full audio info (with timings) for Ayah ${ayahGlobalNumber}, edition ${audioEditionIdentifier}. Error: ${error.message}`,
+        origin: 'AyahAudioRetriever.getAyahAudioInfo' // Keep origin specific
       });
       return null;
     } finally {
       // dependencies.stateStore?.dispatch(ACTIONS.SET_LOADING, false);
     }
   }
+
+  // _fetchAyahAudioURL is no longer directly used by getAyahAudioInfo but might be useful for other specific tasks
+  // or if getAyahWordTimings fails and we want a simpler fallback. For now, it's unused.
+  // Consider removing if it's confirmed to be fully replaced by getAyahWordTimings logic.
+  // For this task, we'll leave it as it might be part of other flows or future fallbacks.
 
   /**
    * Pre-fetches audio info for a list of Ayahs.
