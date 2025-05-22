@@ -6,9 +6,6 @@ import DOMElements from '../../core/dom-elements.js';
 import { ACTIONS, EVENTS, DEFAULT_PROJECT_SCHEMA } from '../../config/app.constants.js';
 import timeFormatter from '../../utils/time.formatter.js';
 import localizationService from '../../core/localization.service.js';
-import textRenderingLogic from '../text-engine/text.rendering.logic.js'; // Added for highlighting
-import quranDataCacheAPI from '../../services/quran.data.cache.js'; // Added for translation texts
-import quranVerseAnalyzer from '../../services/quran.verse.analyzer.js'; // Added for translation texts
 
 /**
  * @typedef {Object} PlaylistItem
@@ -63,10 +60,7 @@ const mainPlaybackController = (() => {
     ayahAudioServiceAPI: {
       getAyahAudioInfo: async () => null,
       preloadAyahAudioInfos: async () => {}
-    },
-    textRenderingLogicAPI: textRenderingLogic, // Added for highlighting
-    quranDataCacheAPI: quranDataCacheAPI,         // Added for translation texts
-    quranVerseAnalyzerAPI: quranVerseAnalyzer   // Added for translation texts
+    }
   };
   
   // الدوال المساعدة
@@ -234,27 +228,6 @@ const mainPlaybackController = (() => {
       
       // نشر الحدث لعناصر أخرى
       notifyTimelineUpdated(currentTime, duration, progressPercent);
-
-      // --- Word Highlighting Logic ---
-      const currentItem = playlist[currentPlaylistIndex];
-      if (currentItem && dependencies.stateStore && dependencies.textRenderingLogicAPI) {
-        const projectState = dependencies.stateStore.getState().currentProject;
-        if (projectState && projectState.quranSelection && projectState.quranSelection.ayahTimings) {
-          const ayahTimingData = projectState.quranSelection.ayahTimings[currentItem.ayahGlobalNumber];
-          const fullAyahText = currentItem.text; // Assuming currentItem.text holds the full Ayah text
-
-          if (fullAyahText && ayahTimingData) {
-            const currentAudioTimeMs = currentTime * 1000;
-            const highlightedTextState = dependencies.textRenderingLogicAPI.getHighlightedTextSegments(
-              fullAyahText,
-              ayahTimingData,
-              currentAudioTimeMs
-            );
-            dependencies.stateStore.dispatch(ACTIONS.SET_HIGHLIGHTED_TEXT_STATE, highlightedTextState);
-          }
-        }
-      }
-      // --- End Word Highlighting Logic ---
     }
   }
 
@@ -421,9 +394,6 @@ const mainPlaybackController = (() => {
     currentPlaylistIndex = index;
     const item = playlist[currentPlaylistIndex];
     notifyCurrentAyahChanged(item);
-
-    // Fetch and set translation texts
-    _loadTranslationTextsForItem(item);
     
     if (!item.isReady || !item.audioUrl) {
       const project = dependencies.stateStore.getState().currentProject;
@@ -513,9 +483,6 @@ const mainPlaybackController = (() => {
     _updateTimelineForNoAudio();
     _handlePlaybackStateChange(false);
     currentPlaylistIndex = -1;
-    // Clear highlights and translation texts when playback stops
-    dependencies.stateStore.dispatch(ACTIONS.SET_HIGHLIGHTED_TEXT_STATE, null); 
-    dependencies.stateStore.dispatch(ACTIONS.SET_TRANSLATION_TEXTS, {});
   }
 
   /**
@@ -571,80 +538,6 @@ const mainPlaybackController = (() => {
     if (injectedDeps.eventAggregator) dependencies.eventAggregator = injectedDeps.eventAggregator;
     if (injectedDeps.errorLogger) dependencies.errorLogger = injectedDeps.errorLogger;
     if (injectedDeps.ayahAudioServiceAPI) dependencies.ayahAudioServiceAPI = injectedDeps.ayahAudioServiceAPI;
-    if (injectedDeps.textRenderingLogicAPI) dependencies.textRenderingLogicAPI = injectedDeps.textRenderingLogicAPI; // Added
-    if (injectedDeps.quranDataCacheAPI) dependencies.quranDataCacheAPI = injectedDeps.quranDataCacheAPI; // Added
-    if (injectedDeps.quranVerseAnalyzerAPI) dependencies.quranVerseAnalyzerAPI = injectedDeps.quranVerseAnalyzerAPI; // Added
-  }
-
-  /**
-   * Fetches and dispatches translation texts for the given playlist item.
-   * @private
-   * @param {PlaylistItem} item - The playlist item for which to load translations.
-   */
-  async function _loadTranslationTextsForItem(item) {
-    if (!item || !item.ayahGlobalNumber) {
-      dependencies.stateStore.dispatch(ACTIONS.SET_TRANSLATION_TEXTS, {});
-      return;
-    }
-
-    const project = dependencies.stateStore.getState().currentProject;
-    if (!project || !project.quranSelection || !project.quranSelection.selectedTranslationIds || project.quranSelection.selectedTranslationIds.length === 0) {
-      dependencies.stateStore.dispatch(ACTIONS.SET_TRANSLATION_TEXTS, {});
-      return;
-    }
-
-    const { selectedTranslationIds } = project.quranSelection;
-    const parsedVerse = dependencies.quranVerseAnalyzerAPI.getSurahAndAyahFromGlobal(item.ayahGlobalNumber);
-
-    if (!parsedVerse) {
-      getLogger().logWarning({
-        message: `Could not parse globalAyahNumber: ${item.ayahGlobalNumber}`,
-        origin: 'MainPlaybackController._loadTranslationTextsForItem'
-      });
-      dependencies.stateStore.dispatch(ACTIONS.SET_TRANSLATION_TEXTS, {});
-      return;
-    }
-
-    const { surahNumber, ayahNumberInSurah } = parsedVerse;
-    const translationTexts = {};
-
-    for (const editionId of selectedTranslationIds) {
-      try {
-        const surahData = await dependencies.quranDataCacheAPI.getFullSurahData(surahNumber, editionId);
-        if (surahData && surahData.ayahs) {
-          const ayahTextData = surahData.ayahs.find(a => a.numberInSurah === ayahNumberInSurah);
-          if (ayahTextData) {
-            translationTexts[editionId] = {
-              editionId: editionId,
-              ayahs: [{
-                globalAyahNumber: item.ayahGlobalNumber, // Or construct if needed
-                text: ayahTextData.text,
-                numberInSurah: ayahTextData.numberInSurah,
-                surahNumber: surahNumber 
-                // Potentially add edition name/language from surahData.edition if available
-              }]
-            };
-          } else {
-            getLogger().logWarning({
-              message: `Ayah ${surahNumber}:${ayahNumberInSurah} not found in edition ${editionId}`,
-              origin: 'MainPlaybackController._loadTranslationTextsForItem'
-            });
-          }
-        } else {
-           getLogger().logWarning({
-              message: `Surah data or ayahs not found for surah ${surahNumber}, edition ${editionId}`,
-              origin: 'MainPlaybackController._loadTranslationTextsForItem'
-           });
-        }
-      } catch (error) {
-        getLogger().handleError({
-          error,
-          message: `Failed to fetch/process translation for edition ${editionId}, Ayah ${item.ayahGlobalNumber}`,
-          origin: 'MainPlaybackController._loadTranslationTextsForItem'
-        });
-      }
-    }
-    dependencies.stateStore.dispatch(ACTIONS.SET_TRANSLATION_TEXTS, translationTexts);
   }
 
   /**
@@ -686,11 +579,6 @@ const mainPlaybackController = (() => {
   function _handleAyahEnded() {
     if (isPlaying) {
       playNextAyahWithDelay();
-    } else {
-      // If playback ended because the last ayah finished and isPlaying is now false
-      dependencies.stateStore.dispatch(ACTIONS.SET_HIGHLIGHTED_TEXT_STATE, null);
-      // Potentially clear translation texts too, or leave them for the last ayah.
-      // For now, let stopPlayback handle clearing translations.
     }
   }
 

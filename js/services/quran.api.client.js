@@ -250,13 +250,11 @@ const quranApiClient = {
   },
 
   /**
-   * الحصول على معلومات عن الآيات مع أوقات الكلمات.
-   * يتوقع أن تحتوي الاستجابة الناجحة على خاصية `segments` ضمن كائن الآية،
-   * وهي عبارة عن مصفوفة من الكلمات وتوقيتاتها بالشكل التالي: `[word_text, start_time_ms, end_time_ms]`.
-   * @param {string | number} ayahReference - مرجع الآية (مثال: "2:255" أو رقم الآية العالمي).
-   * @param {string} audioEditionIdentifier - معرف إصدار الصوت (مثال: 'ar.alafasy').
-   * @param {Object} [errorLogger=console] - مسجل الأخطاء.
-   * @returns {Promise<QuranAyah & {segments: Array<[string, number, number]>}>} وعد بمعلومات الآية مع أوقات الكلمات (خاصية `segments`).
+   * الحصول على معلومات عن الآيات مع أوقات الكلمات
+   * @param {string | number} ayahReference - مرجع الآية
+   * @param {string} audioEditionIdentifier - معرف إصدار الصوت
+   * @param {Object} [errorLogger=console] - مسجل الأخطاء
+   * @returns {Promise<QuranAyah>} وعد بمعلومات الآية مع أوقات الكلمات
    */
   async getAyahWordTimings(ayahReference, audioEditionIdentifier, errorLogger = console) {
     if (!ayahReference || !audioEditionIdentifier) {

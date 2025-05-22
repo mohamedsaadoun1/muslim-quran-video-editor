@@ -235,107 +235,9 @@ const textRenderingLogic = (() => {
     stopTextEffect,
     clearTextEffect,
     clearAllTextEffects,
-    EFFECT_TYPES: { ...TEXT_EFFECT_TYPES },
-    getHighlightedTextSegments // Expose the new function
+    EFFECT_TYPES: { ...TEXT_EFFECT_TYPES }
   };
 })();
-
-// --- JSDoc type definitions for word highlighting ---
-
-/**
- * @typedef {import('../project-manager/project.model.js').WordTiming} WordTiming
- * // Or define locally if preferred:
- * // typedef {Object} WordTiming
- * // @property {string} text - The word text.
- * // @property {number} startTime - Start time in milliseconds.
- * // @property {number} endTime - End time in milliseconds.
- */
-
-/**
- * @typedef {import('../project-manager/project.model.js').AyahTimingData} AyahTimingData
- * // Or define locally:
- * // typedef {Object} AyahTimingData
- * // @property {number} durationSec - Total duration of the ayah audio in seconds.
- * // @property {Array<WordTiming>} [words] - Array of word timings.
- * // @property {string} [audioUrl] - The URL of the audio file for this ayah.
- */
-
-/**
- * Represents a segment of text with highlighting status.
- * @typedef {Object} HighlightedSegment
- * @property {string} text - The text content of the segment.
- * @property {boolean} isActive - True if the segment is currently being played.
- * @property {boolean} isPlayed - True if the segment has already been played.
- */
-
-/**
- * Output structure for text segmented by words with highlighting information.
- * @typedef {Object} WordSegmentedTextOutput
- * @property {Array<HighlightedSegment>} segments - Array of text segments with their highlighting status.
- * @property {string} originalText - The full original verse text.
- */
-
-
-/**
- * Generates text segments with highlighting information based on current audio time.
- * Assumes `ayahTimingData.words` provides the definitive segmentation.
- * @param {string} fullText - The complete text of the ayah.
- * @param {AyahTimingData | null | undefined} ayahTimingData - Timing data for the ayah, including word timings.
- * @param {number} currentAudioTimeMs - Current audio playback time in milliseconds.
- * @returns {WordSegmentedTextOutput}
- */
-function getHighlightedTextSegments(fullText, ayahTimingData, currentAudioTimeMs) {
-  const output = {
-    segments: [],
-    originalText: fullText,
-  };
-
-  if (!ayahTimingData || !ayahTimingData.words || ayahTimingData.words.length === 0) {
-    // No word timing data, return full text as a single non-active segment
-    output.segments.push({
-      text: fullText,
-      isActive: false,
-      isPlayed: false, // Or true if currentAudioTimeMs > 0 and duration is known/passed
-    });
-    return output;
-  }
-
-  // Ensure currentAudioTimeMs is a number, default to 0 if not
-  const currentTime = (typeof currentAudioTimeMs === 'number' && !isNaN(currentAudioTimeMs)) ? currentAudioTimeMs : 0;
-
-  for (const word of ayahTimingData.words) {
-    const { text, startTime, endTime } = word;
-    let isActive = false;
-    let isPlayed = false;
-
-    if (currentTime < startTime) {
-      // Word is upcoming
-      isActive = false;
-      isPlayed = false;
-    } else if (currentTime >= startTime && currentTime <= endTime) {
-      // Word is currently active
-      isActive = true;
-      isPlayed = false;
-    } else { // currentTime > endTime
-      // Word has been played
-      isActive = false;
-      isPlayed = true;
-    }
-    
-    output.segments.push({
-      text: text, // Use the text directly from the timing data
-      isActive,
-      isPlayed,
-    });
-  }
-  
-  // If there are no words from timing data but fullText exists, handle it (already covered by the initial check)
-  // This logic assumes that the sum of word segments from ayahTimingData.words reconstructs the fullText,
-  // or that the UI will render these segments sequentially.
-
-  return output;
-}
-
 
 /**
  * وظيفة التهيئة
@@ -351,8 +253,7 @@ export function initializeTextRenderingLogic(deps = {}) {
     stopTextEffect: textRenderingLogic.stopTextEffect,
     clearTextEffect: textRenderingLogic.clearTextEffect,
     clearAllTextEffects: textRenderingLogic.clearAllTextEffects,
-    EFFECT_TYPES: textRenderingLogic.EFFECT_TYPES,
-    getHighlightedTextSegments: getHighlightedTextSegments // Expose new function
+    EFFECT_TYPES: textRenderingLogic.EFFECT_TYPES
   };
 }
 
